@@ -60,6 +60,8 @@ func (s *Server) Handler(addr string) http.Handler {
 	mux.HandleFunc("POST /api/setup", s.setup)
 	mux.HandleFunc("POST /api/add", s.add)
 	mux.HandleFunc("POST /api/pick", s.pick)
+	mux.HandleFunc("GET /api/scan", s.scan)
+	mux.HandleFunc("POST /api/addmany", s.addMany)
 	mux.HandleFunc("POST /api/project", s.project)
 	mux.HandleFunc("POST /api/settings", s.settings)
 	mux.HandleFunc("POST /api/open", s.open)
@@ -214,6 +216,41 @@ func AddFolder(dir, folder, name string) error {
 	}
 	c.Projects = append(c.Projects, agent.Project{Name: name, Folder: folder})
 	return c.Save(dir)
+}
+
+// scan lists project folders found on this PC that aren't added yet.
+func (s *Server) scan(w http.ResponseWriter, _ *http.Request) {
+	c, err := agent.LoadConfig(s.Dir)
+	if err != nil {
+		reply(w, nil, err)
+		return
+	}
+	var have []string
+	for _, p := range c.Projects {
+		have = append(have, p.Folder)
+	}
+	home, _ := os.UserHomeDir()
+	reply(w, map[string]any{"folders": ScanFolders(home, have)}, nil)
+}
+
+// addMany adds several folders; it says which ones couldn't be.
+func (s *Server) addMany(w http.ResponseWriter, r *http.Request) {
+	var req struct{ Folders []string }
+	if err := decode(r, &req); err != nil {
+		reply(w, nil, err)
+		return
+	}
+	var failed []string
+	for _, f := range req.Folders {
+		if err := AddFolder(s.Dir, f, ""); err != nil {
+			failed = append(failed, filepath.Base(f)+": "+err.Error())
+		}
+	}
+	if len(failed) > 0 {
+		reply(w, nil, errors.New(strings.Join(failed, "; ")))
+		return
+	}
+	reply(w, nil, nil)
 }
 
 func (s *Server) pick(w http.ResponseWriter, _ *http.Request) {

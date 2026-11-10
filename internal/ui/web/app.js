@@ -2,6 +2,7 @@
 // Braid's window on this PC. Talks to the braid program running here.
 const app = document.getElementById("app");
 let st = null, view = "home", openRow = null, typing = false;
+let found = null, picked = new Set(), dismissed = false; // project folders found on this PC
 
 function h(tag, props, ...kids) {
   const el = document.createElement(tag);
@@ -47,6 +48,10 @@ function stateOf(p) {
 async function refresh() {
   if (typing) return;
   try { st = await api("state"); } catch (e) { show(h("p", { class: "error" }, e.message)); return; }
+  if (st.setUp && found === null) { // look once for project folders to suggest
+    found = [];
+    try { found = (await api("scan")).folders || []; picked = new Set(found.map(f => f.path)); } catch {}
+  }
   render();
 }
 
@@ -109,13 +114,40 @@ function home() {
       h("div", { class: "summary" }, sumDot ? h("span", { class: "dot " + sumDot, "aria-hidden": "true" }) : null, summary),
       h("button", { class: "btn", onclick: () => api("open", { What: "timeline" }).catch(e => alert(e.message)) }, "Timeline"),
       h("button", { class: "btn", onclick: () => { view = "settings"; render(); } }, "Settings")),
+    suggestions(),
     ps.length ? h("div", { class: "list" }, ps.map((p, i) => item(p, states[i]))) :
-      h("div", { class: "list empty" }, h("h2", {}, "No folders yet"),
+      (found && found.length && !dismissed) ? null : h("div", { class: "list empty" }, h("h2", {}, "No folders yet"),
         h("p", {}, "Add a project folder and Braid keeps it the same on every PC you add it to. Add the same project on another PC and it fills in by itself."),
         h("button", { class: "btn primary", onclick: add }, "Add a folder")),
     ps.length ? h("div", { class: "add" }, h("button", { class: "btn primary", onclick: add }, "+ Add a folder")) : null,
     typed, addMsg,
     h("footer", {}, `${st.pc} · connected to ${st.hub.replace(/^https?:\/\//, "")} · braid ${st.version}`));
+}
+
+// Folders found on this PC that look like projects: ticked, one click to add.
+function suggestions() {
+  if (dismissed || !found || !found.length) return null;
+  const msg = h("p", { class: "error", role: "alert" });
+  const btn = h("button", { class: "btn primary" }, "");
+  const label = () => { btn.textContent = picked.size ? `Add ${picked.size} folder${picked.size > 1 ? "s" : ""}` : "Nothing selected"; btn.disabled = !picked.size; };
+  label();
+  btn.addEventListener("click", async () => {
+    btn.disabled = true; btn.textContent = "Adding…";
+    try { await api("addmany", { Folders: [...picked] }); found = null; dismissed = false; refresh(); }
+    catch (e) { msg.textContent = e.message; label(); }
+  });
+  return h("div", { class: "card", style: "margin-bottom:14px" },
+    h("div", { style: "font-weight:600" }, `Found ${found.length} project folder${found.length > 1 ? "s" : ""} on this PC`),
+    h("p", { class: "hint", style: "margin-bottom:10px" }, "Braid will keep the ticked ones the same on all your PCs. Untick any you don't want."),
+    h("div", { class: "found" }, found.map(f => {
+      const box = h("input", { type: "checkbox", id: "f" + f.path, checked: picked.has(f.path) });
+      box.addEventListener("change", () => { box.checked ? picked.add(f.path) : picked.delete(f.path); label(); });
+      return h("label", { class: "toggle", for: "f" + f.path, style: "padding:8px 4px" }, box,
+        h("div", {}, h("b", {}, f.name, f.claude ? h("span", { class: "tag" }, "used with Claude") : null), h("span", {}, f.path)));
+    })),
+    h("div", { class: "actions", style: "margin-top:12px" }, btn,
+      h("button", { class: "btn", onclick: () => { dismissed = true; render(); } }, "Not now")),
+    msg);
 }
 
 function item(p, s) {
