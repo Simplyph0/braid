@@ -432,6 +432,10 @@ func selfUpdate(ctx context.Context, dir string, lg *log.Logger) {
 		return
 	}
 	for {
+		every := time.Hour
+		if c, err := agent.LoadConfig(dir); err == nil {
+			every = c.UpdateEvery()
+		}
 		if c, err := agent.LoadConfig(dir); err == nil && !c.NoUpdate {
 			v, err := update.Install(c.Hub, exe)
 			switch {
@@ -447,7 +451,7 @@ func selfUpdate(ctx context.Context, dir string, lg *log.Logger) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(time.Hour):
+		case <-time.After(every):
 		}
 	}
 }

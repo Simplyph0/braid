@@ -35,13 +35,14 @@ type Project struct {
 // Config is this PC's setup. It holds the key: it's written readable by
 // this user only.
 type Config struct {
-	Hub      string    `json:"hub"`
-	Token    string    `json:"token"` // proves the passphrase to the hub (crypt.AuthToken of Key)
-	PC       string    `json:"pc"`
-	Key      string    `json:"key"`                // shortcut: the master key sits in this 0600 file; move it to the OS keyring when there's an installer
-	NoClaude bool      `json:"noClaude,omitempty"` // don't ask Claude to merge on this PC
-	NoUpdate bool      `json:"noUpdate,omitempty"` // don't install updates from the hub
-	Projects []Project `json:"projects"`
+	Hub           string    `json:"hub"`
+	Token         string    `json:"token"` // proves the passphrase to the hub (crypt.AuthToken of Key)
+	PC            string    `json:"pc"`
+	Key           string    `json:"key"`                     // shortcut: the master key sits in this 0600 file; move it to the OS keyring when there's an installer
+	NoClaude      bool      `json:"noClaude,omitempty"`      // don't ask Claude to merge on this PC
+	NoUpdate      bool      `json:"noUpdate,omitempty"`      // don't install updates from the hub
+	UpdateMinutes int       `json:"updateMinutes,omitempty"` // how often to look for one (1 or more; default 60)
+	Projects      []Project `json:"projects"`
 }
 
 // Status is what the agent last did for a project, for `braid status`.
@@ -92,6 +93,14 @@ func (c *Config) Save(dir string) error {
 		return err
 	}
 	return os.Rename(tmp, filepath.Join(dir, "config.json"))
+}
+
+// UpdateEvery is how often this PC looks for updates.
+func (c *Config) UpdateEvery() time.Duration {
+	if c.UpdateMinutes < 1 {
+		return time.Hour
+	}
+	return time.Duration(c.UpdateMinutes) * time.Minute
 }
 
 func (c *Config) Store() store.Store { return &store.HTTP{URL: c.Hub, Token: c.Token} }

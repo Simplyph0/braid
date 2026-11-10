@@ -177,7 +177,9 @@ a computer, set `"noClaude": true` in its config file:
 - Linux: `~/.config/braid/config.json`
 - Windows: `%AppData%\braid\config.json`
 
-`"noUpdate": true` there turns off automatic updates.
+`"noUpdate": true` there turns off automatic updates, and `"updateMinutes": 5`
+sets how often a computer looks for one (default 60, minimum 1; also in the
+window's Settings). The hub looks for new builds hourly; `-check 5m` changes it.
 
 ## 3. The web app
 

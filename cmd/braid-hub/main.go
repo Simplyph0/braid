@@ -23,6 +23,7 @@ func main() {
 	data := flag.String("data", "braid-data", "folder for the hub's data")
 	addr := flag.String("addr", ":8490", "address to listen on")
 	updates := flag.String("updates", "", "folder of signed braid builds to offer PCs (default: \"update\" next to this program, else in -data)")
+	every := flag.Duration("check", time.Hour, "how often to look for new builds (1m or more)")
 	mirror := flag.String("mirror", "https://github.com/Simplyph0/braid/releases/latest/download", "where to fetch new signed builds from, hourly (\"\" turns it off)")
 	flag.Parse()
 	if err := os.MkdirAll(*data, 0o700); err != nil {
@@ -46,7 +47,7 @@ func main() {
 				} else if v != "" {
 					log.Printf("now offering PCs braid %s", v)
 				}
-				time.Sleep(time.Hour)
+				time.Sleep(max(*every, time.Minute))
 			}
 		}()
 	}

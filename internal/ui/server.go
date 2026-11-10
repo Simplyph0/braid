@@ -126,7 +126,7 @@ func (s *Server) state(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	out := map[string]any{"setUp": true, "pc": c.PC, "hub": c.Hub, "version": update.Version,
-		"noClaude": c.NoClaude, "noUpdate": c.NoUpdate, "autostart": s.IsAuto != nil && s.IsAuto()}
+		"noClaude": c.NoClaude, "noUpdate": c.NoUpdate, "updateMinutes": int(c.UpdateEvery().Minutes()), "autostart": s.IsAuto != nil && s.IsAuto()}
 	ps := []projectView{}
 	for _, p := range c.Projects {
 		st, _ := agent.ReadStatus(s.Dir, p.Name)
@@ -257,6 +257,7 @@ func (s *Server) project(w http.ResponseWriter, r *http.Request) {
 func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		NoClaude, NoUpdate, Autostart *bool
+		UpdateMinutes                 *int
 	}
 	if err := decode(r, &req); err != nil {
 		reply(w, nil, err)
@@ -272,6 +273,13 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.NoUpdate != nil {
 		c.NoUpdate = *req.NoUpdate
+	}
+	if req.UpdateMinutes != nil {
+		if *req.UpdateMinutes < 1 || *req.UpdateMinutes > 1440 {
+			reply(w, nil, errors.New("choose between 1 minute and 1 day"))
+			return
+		}
+		c.UpdateMinutes = *req.UpdateMinutes
 	}
 	if err := c.Save(s.Dir); err != nil {
 		reply(w, nil, err)

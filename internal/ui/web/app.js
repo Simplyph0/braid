@@ -158,7 +158,17 @@ function settings() {
     h("div", { class: "list" },
       toggle("autostart", "Start Braid when I log in", "Keeps your folders in step in the background, with an icon by the clock."),
       toggle("noClaude", "Let Claude join overlapping edits", "When two PCs changed the same lines, Claude Code on this PC merges them. It only sees that file, with no tools. Needs Claude Code signed in.", true),
-      toggle("noUpdate", "Install updates automatically", "New versions come from your hub, signed by the Braid release key.", true)),
+      toggle("noUpdate", "Install updates automatically", "New versions come from your hub, signed by the Braid release key.", true),
+      h("label", { class: "toggle", for: "every" },
+        h("div", { style: "flex:1" }, h("b", {}, "Look for updates"), h("span", {}, "How often this PC asks your hub for a new version.")),
+        (() => {
+          const sel = h("select", { id: "every", class: "btn" },
+            ...[[1, "every minute"], [5, "every 5 minutes"], [15, "every 15 minutes"], [60, "every hour"], [1440, "once a day"]]
+              .map(([m, label]) => h("option", { value: m, selected: m === st.updateMinutes }, label)));
+          if (![1, 5, 15, 60, 1440].includes(st.updateMinutes)) sel.append(h("option", { value: st.updateMinutes, selected: true }, `every ${st.updateMinutes} min`));
+          sel.addEventListener("change", async () => { try { await api("settings", { UpdateMinutes: +sel.value }); refresh(); } catch (e) { alert(e.message); } });
+          return sel;
+        })())),
     h("footer", {}, `This PC: ${st.pc} · hub: ${st.hub} · braid ${st.version}`));
 }
 
