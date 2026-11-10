@@ -76,3 +76,7 @@ scripts/demo.sh   # a hub and two pretend computers on this machine
 ```
 
 Braid succeeds [ClaudeSync](https://github.com/Simplyph0/claudesync).
+
+## License
+
+Public domain ([The Unlicense](LICENSE)): use it for anything, no conditions.
