@@ -13,14 +13,14 @@ You need:
 Works on any distribution with Podman or Docker, and keeps every computer
 up to date: the image carries the latest signed builds.
 
+#### Podman
+
 ```bash
 podman run -d --name braid-hub --restart=always \
   -p 8490:8490 -v braid-data:/data \
   --label io.containers.autoupdate=registry \
   ghcr.io/simplyph0/braid-hub:latest
 ```
-
-(`docker run` takes the same arguments; leave out the `--label` line.)
 
 To update the hub (and through it, every computer) automatically with Podman,
 run it as a systemd service and enable the update timer:
@@ -30,8 +30,45 @@ podman generate systemd --new --name braid-hub | sudo tee /etc/systemd/system/br
 sudo systemctl daemon-reload && sudo systemctl enable --now braid-hub podman-auto-update.timer
 ```
 
-With Docker, use [Watchtower](https://containrrr.dev/watchtower/) or pull the
-image now and then.
+#### Docker
+
+```bash
+docker run -d --name braid-hub --restart unless-stopped \
+  -p 8490:8490 -v braid-data:/data \
+  ghcr.io/simplyph0/braid-hub:latest
+docker logs braid-hub   # shows the token
+```
+
+Or with Docker Compose, save this as `compose.yaml`:
+
+```yaml
+services:
+  braid-hub:
+    image: ghcr.io/simplyph0/braid-hub:latest
+    restart: unless-stopped
+    ports:
+      - "8490:8490"
+    volumes:
+      - braid-data:/data
+volumes:
+  braid-data:
+```
+
+```bash
+docker compose up -d
+docker compose logs braid-hub   # shows the token
+```
+
+To update the hub (and through it, every computer):
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+or, without Compose: `docker pull ghcr.io/simplyph0/braid-hub:latest`, then
+`docker rm -f braid-hub` and the `docker run` line again (your data stays in
+the `braid-data` volume). For automatic updates, add
+[Watchtower](https://containrrr.dev/watchtower/).
 
 ### Or as a plain program
 
@@ -71,7 +108,7 @@ On its first start the hub prints a **token** (also saved in its data folder
 as `token`) and the `braid setup` line for your computers:
 
 ```bash
-podman logs braid-hub      # or: journalctl -u braid-hub
+podman logs braid-hub      # or: docker logs braid-hub, or: journalctl -u braid-hub
 ```
 
 The hub speaks plain HTTP on port 8490. Your files are encrypted before they
