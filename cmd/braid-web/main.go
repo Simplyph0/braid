@@ -114,8 +114,11 @@ type momentView struct {
 
 type pcView struct {
 	agent.Status
-	Key string `json:"key"` // the PC's name as used on the hub
-	Pin string `json:"pin"`
+	Key      string    `json:"key"` // the PC's name as used on the hub
+	Pin      string    `json:"pin"`
+	Known    bool      `json:"known"`    // the hub says whether it's online (an older hub doesn't)
+	Online   bool      `json:"online"`   // phoned home recently, by the hub's clock
+	LastSeen time.Time `json:"lastSeen"` // when it last phoned home
 }
 
 type projectView struct {
@@ -137,6 +140,14 @@ func overview(_ []js.Value) (any, error) {
 	refs, err := s.Refs("")
 	if err != nil {
 		return nil, err
+	}
+	seen := map[string]store.PC{}
+	if h, ok := s.(*store.HTTP); ok {
+		if pcs, err := h.PCs(); err == nil {
+			for _, p := range pcs {
+				seen[p.Name] = p
+			}
+		}
 	}
 	out := []projectView{}
 	for ref, tip := range refs {
@@ -168,7 +179,13 @@ func overview(_ []js.Value) (any, error) {
 			}
 			key := strings.TrimPrefix(n, "status/")
 			pin, _ := r.Tip("pin/" + key)
-			pv.PCs = append(pv.PCs, pcView{Status: ps, Key: key, Pin: pin})
+			v := pcView{Status: ps, Key: key, Pin: pin}
+			if p, ok := seen[key]; ok {
+				v.Known, v.Online, v.LastSeen = true, p.Online, p.LastSeen
+			} else if len(seen) > 0 {
+				v.Known = true // the hub has never heard this PC phone home
+			}
+			pv.PCs = append(pv.PCs, v)
 		}
 		sort.Slice(pv.PCs, func(i, j int) bool { return pv.PCs[i].PC < pv.PCs[j].PC })
 		for ref := range refs {

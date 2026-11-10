@@ -26,8 +26,13 @@ const maxBody = 8 << 20 // a 4 MiB chunk plus encryption overhead fits easily
 // PC proves it knows the passphrase by sending a key derived from it (see
 // crypt.AuthToken), which can't be turned back into the encryption key. The
 // hub keeps only a hash of that key, set by the first PC to connect.
-func Handler(d *Dir) http.Handler {
+func Handler(d *Dir) http.Handler { return HandlerWith(d, time.Minute) }
+
+// HandlerWith is Handler with how long a PC may stay quiet before the hub
+// calls it offline.
+func HandlerWith(d *Dir, offlineAfter time.Duration) http.Handler {
 	var s Store = d
+	presence := NewPresence(d.Root, offlineAfter)
 	authFile := filepath.Join(d.Root, "auth")
 	var mu sync.Mutex
 	authHash, _ := os.ReadFile(authFile)
@@ -115,6 +120,16 @@ func Handler(d *Dir) http.Handler {
 			return
 		}
 		writeErr(w, s.SetRef(r.PathValue("name"), req.Old, req.New))
+	})
+	// PCs phone home every 30 seconds; the hub says who is online.
+	mux.HandleFunc("POST /beat", func(w http.ResponseWriter, r *http.Request) {
+		name, _ := io.ReadAll(io.LimitReader(r.Body, 256))
+		if !presence.Beat(string(name)) {
+			http.Error(w, "bad name", http.StatusBadRequest)
+		}
+	})
+	mux.HandleFunc("GET /pcs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"offlineAfterSeconds": int(presence.OfflineAfter.Seconds()), "pcs": presence.List()})
 	})
 	mux.HandleFunc("GET /refs", func(w http.ResponseWriter, r *http.Request) {
 		m, err := s.Refs(r.URL.Query().Get("prefix"))
@@ -300,4 +315,20 @@ func (h *HTTP) Notes(prefix string) ([]string, error) {
 	}
 	var l []string
 	return l, json.Unmarshal(b, &l)
+}
+
+// Beat tells the hub this PC is alive.
+func (h *HTTP) Beat(pc string) error {
+	_, _, err := h.do("POST", "/beat", []byte(pc))
+	return err
+}
+
+// PCs asks the hub which PCs are online.
+func (h *HTTP) PCs() ([]PC, error) {
+	b, _, err := h.do("GET", "/pcs", nil)
+	if err != nil {
+		return nil, err
+	}
+	var out struct{ PCs []PC }
+	return out.PCs, json.Unmarshal(b, &out)
 }

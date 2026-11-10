@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Simplyph0/braid/internal/store"
 )
@@ -189,4 +190,24 @@ func TestManyProjectsAllSyncInOneTick(t *testing.T) {
 			t.Errorf("%s: %+v %v", n, st, err)
 		}
 	}
+}
+
+func TestPCPhonesHomeEvenWhileBusy(t *testing.T) {
+	hub := httptest.NewServer(store.HandlerWith(&store.Dir{Root: t.TempDir()}, time.Minute))
+	defer hub.Close()
+	p := newPC(t, hub.URL, "Desktop", "correct horse")
+	p.a.Beat = 50 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go p.a.heartbeat(ctx) // no sync running at all
+	c, _ := LoadConfig(p.dir)
+	h := &store.HTTP{URL: c.Hub, Token: c.Token}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if pcs, _ := h.PCs(); len(pcs) == 1 && pcs[0].Name == "Desktop" && pcs[0].Online {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("the hub never heard from the PC")
 }

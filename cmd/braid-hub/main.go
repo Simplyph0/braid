@@ -23,6 +23,7 @@ func main() {
 	data := flag.String("data", "braid-data", "folder for the hub's data")
 	addr := flag.String("addr", ":8490", "address to listen on")
 	updates := flag.String("updates", "", "folder of signed braid builds to offer PCs (default: \"update\" next to this program, else in -data)")
+	offline := flag.Duration("offline-after", time.Minute, "call a PC offline when it hasn't phoned home for this long (5s or more)")
 	every := flag.Duration("check", time.Hour, "how often to look for new builds (1m or more)")
 	mirror := flag.String("mirror", "https://github.com/Simplyph0/braid/releases/latest/download", "where to fetch new signed builds from, hourly (\"\" turns it off)")
 	flag.Parse()
@@ -51,7 +52,7 @@ func main() {
 			}
 		}()
 	}
-	srv := &http.Server{Addr: *addr, Handler: handler(store.Handler(d), ud), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: *addr, Handler: handler(store.HandlerWith(d, *offline), ud), ReadHeaderTimeout: 10 * time.Second}
 	log.Fatal(srv.ListenAndServe())
 }
 

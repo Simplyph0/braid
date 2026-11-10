@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -180,9 +181,11 @@ type Agent struct {
 	Store  store.Store
 	Log    *log.Logger
 	Settle time.Duration
+	Beat   time.Duration // how often to phone home (default 30s)
 
 	mu        sync.Mutex // guards ws and published: projects sync side by side
 	busy      sync.Map   // project name -> true while it's syncing
+	beatErr   string     // the last failure to phone home, so it's logged once
 	hub       string     // the hub a.Store talks to
 	ws        map[string]*timeline.Workspace
 	published map[string]published
@@ -237,7 +240,7 @@ func (a *Agent) Tick(ctx context.Context) error {
 		slots <- struct{}{}
 		wg.Add(1)
 		go func() {
-			defer func() { <-slots; wg.Done(); a.busy.Delete(p.Name) }()
+			defer func() { a.busy.Delete(p.Name); <-slots; wg.Done() }() // free the project before Tick can return
 			a.tickOne(ctx, c, p)
 		}()
 	}
@@ -461,6 +464,7 @@ func (a *Agent) Resolve(r *timeline.Repo, prefix string) (string, error) {
 
 // Run ticks until ctx ends.
 func (a *Agent) Run(ctx context.Context, every time.Duration) {
+	go a.heartbeat(ctx)
 	for {
 		if err := a.Tick(ctx); err != nil && ctx.Err() == nil {
 			a.Log.Printf("%v", err)
@@ -491,5 +495,33 @@ func shellCheck(command string) timeline.Check {
 			return fmt.Errorf("%q failed (%v): %s", command, err, strings.TrimSpace(string(out)))
 		}
 		return nil
+	}
+}
+
+// heartbeat phones home every 30 seconds, whatever the syncs are doing (even
+// in the middle of a long upload), so the hub knows this PC is alive. The hub
+// calls a PC offline when it stops hearing from it.
+func (a *Agent) heartbeat(ctx context.Context) {
+	every := a.Beat
+	if every <= 0 {
+		every = 30 * time.Second
+	}
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		if c, err := LoadConfig(a.Dir); err == nil {
+			h := &store.HTTP{URL: c.Hub, Token: c.Token, Client: &http.Client{Timeout: 10 * time.Second}}
+			if err := h.Beat(timeline.SafeName(c.PC)); err != nil && a.beatErr != err.Error() {
+				a.beatErr = err.Error() // once per kind of failure, not every 30 seconds
+				a.Log.Printf("couldn't phone home: %v", err)
+			} else if err == nil {
+				a.beatErr = ""
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
 	}
 }

@@ -45,10 +45,12 @@ const when = iso => new Date(iso).toLocaleString(undefined, { month: "short", da
 
 // A PC's state: dot colour and one line of words.
 function pcState(pc, project) {
-  const stale = (Date.now() - new Date(pc.updated)) / 1000 > 180;
+  // The hub says who is online (it hears each PC phone home every 30 s); an older hub doesn't, so go by the PC's own last report.
+  const stale = pc.known ? !pc.online : (Date.now() - new Date(pc.updated)) / 1000 > 180;
+  const seenAt = pc.known && pc.lastSeen && !pc.lastSeen.startsWith("0001") ? pc.lastSeen : pc.updated;
+  if (stale) return { dot: "", text: "Offline · last seen " + ago(seenAt) };
   if (pc.error) return { dot: "bad", text: "Problem: " + pc.error };
   if (pc.conflicts && pc.conflicts.length) return { dot: "warn", text: "Its work waits: " + pc.conflicts.map(c => c.Path).join(", ") };
-  if (stale) return { dot: "", text: "Offline · last seen " + ago(pc.updated) };
   if (pc.pin) return { dot: "warn", text: "Showing an older moment" };
   if (pc.at === project.main) return { dot: "ok", text: "Up to date" };
   return { dot: "ok", text: "Syncing…" };
