@@ -16,12 +16,14 @@ import (
 	"time"
 
 	"github.com/Simplyph0/braid/internal/store"
+	"github.com/Simplyph0/braid/internal/update"
 )
 
 func main() {
 	data := flag.String("data", "braid-data", "folder for the hub's data")
 	addr := flag.String("addr", ":8490", "address to listen on")
-	updates := flag.String("updates", "", "folder of signed braid builds to offer PCs (default: \"update\" next to this program)")
+	updates := flag.String("updates", "", "folder of signed braid builds to offer PCs (default: \"update\" next to this program, else in -data)")
+	mirror := flag.String("mirror", "https://github.com/Simplyph0/braid/releases/latest/download", "where to fetch new signed builds from, hourly (\"\" turns it off)")
 	flag.Parse()
 	if err := os.MkdirAll(*data, 0o700); err != nil {
 		log.Fatal(err)
@@ -32,7 +34,23 @@ func main() {
 		log.Printf("new hub: the first PC to run `braid setup http://<this-server>%s` sets its passphrase", *addr)
 	}
 	log.Printf("web app: http://<this-server>%s (sign in with your passphrase)", *addr)
-	srv := &http.Server{Addr: *addr, Handler: handler(store.Handler(d), updatesDir(*updates)), ReadHeaderTimeout: 10 * time.Second}
+	ud := updatesDir(*updates)
+	if ud == "" {
+		ud = filepath.Join(*data, "update")
+	}
+	if *mirror != "" {
+		go func() { // keep the builds PCs get current, so the hub itself rarely needs updating
+			for {
+				if v, err := update.Mirror(*mirror, ud); err != nil {
+					log.Printf("fetching new builds: %v", err)
+				} else if v != "" {
+					log.Printf("now offering PCs braid %s", v)
+				}
+				time.Sleep(time.Hour)
+			}
+		}()
+	}
+	srv := &http.Server{Addr: *addr, Handler: handler(store.Handler(d), ud), ReadHeaderTimeout: 10 * time.Second}
 	log.Fatal(srv.ListenAndServe())
 }
 

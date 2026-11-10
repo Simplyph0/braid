@@ -99,28 +99,76 @@ var errNoUpdates = errors.New("the hub has no updates to offer")
 
 // Latest fetches and verifies the hub's manifest.
 func Latest(hub string) (*Manifest, error) {
-	base := strings.TrimRight(hub, "/") + "/update/"
-	raw, err := get(base+"manifest.json", 1<<20)
-	if err != nil {
-		return nil, err
+	m, _, _, err := fetchManifest(strings.TrimRight(hub, "/") + "/update/")
+	return m, err
+}
+
+// fetchManifest gets base+manifest.json and its signature, and checks it.
+func fetchManifest(base string) (m *Manifest, raw, sig []byte, err error) {
+	if raw, err = get(base+"manifest.json", 1<<20); err != nil {
+		return nil, nil, nil, err
 	}
-	sig, err := get(base+"manifest.sig", 1024)
-	if err != nil {
-		return nil, err
+	if sig, err = get(base+"manifest.sig", 1024); err != nil {
+		return nil, nil, nil, err
 	}
 	pub, err := base64.StdEncoding.DecodeString(PublicKey)
 	if err != nil || len(pub) != ed25519.PublicKeySize {
-		return nil, errors.New("this build has no valid release key")
+		return nil, nil, nil, errors.New("this build has no valid release key")
 	}
 	s, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(sig)))
 	if err != nil || !ed25519.Verify(pub, raw, s) {
-		return nil, errors.New("the update's signature doesn't match: not installing it")
+		return nil, nil, nil, errors.New("the update's signature doesn't match: not installing it")
 	}
-	m := &Manifest{}
-	if err := json.Unmarshal(raw, m); err != nil {
-		return nil, err
+	m = &Manifest{}
+	return m, raw, sig, json.Unmarshal(raw, m)
+}
+
+// Mirror copies a newer signed release from src (a folder of release files,
+// such as GitHub's latest release) into dir, which a hub serves to PCs. So a
+// hub hands out new versions without being updated itself. It returns the
+// version copied, or "" when dir was already current.
+func Mirror(src, dir string) (string, error) {
+	m, raw, sig, err := fetchManifest(strings.TrimRight(src, "/") + "/")
+	if err != nil {
+		return "", err
 	}
-	return m, nil
+	var cur Manifest
+	if b, err := os.ReadFile(filepath.Join(dir, "manifest.json")); err == nil {
+		json.Unmarshal(b, &cur)
+	}
+	if cur.Version != "" && !Newer(m.Version, cur.Version) {
+		return "", nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	for _, f := range m.Files {
+		if strings.ContainsAny(f.Name, `/\`) || f.Name == "" || strings.HasPrefix(f.Name, ".") {
+			return "", fmt.Errorf("bad file name %q in the release", f.Name)
+		}
+		data, err := get(strings.TrimRight(src, "/")+"/"+f.Name, 200<<20)
+		if err != nil {
+			return "", err
+		}
+		if sum := sha256.Sum256(data); hex.EncodeToString(sum[:]) != f.SHA256 {
+			return "", fmt.Errorf("%s doesn't match the signed checksum", f.Name)
+		}
+		if err := writeFile(filepath.Join(dir, f.Name), data); err != nil {
+			return "", err
+		}
+	}
+	if err := writeFile(filepath.Join(dir, "manifest.sig"), sig); err != nil {
+		return "", err
+	}
+	return m.Version, writeFile(filepath.Join(dir, "manifest.json"), raw) // last: PCs see the new version only once everything is there
+}
+
+func writeFile(p string, data []byte) error {
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, p)
 }
 
 // Install downloads this platform's build from the hub if it's newer than

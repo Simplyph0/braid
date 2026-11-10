@@ -11,7 +11,8 @@ You need:
 ### With a container (recommended)
 
 Works on any distribution with Podman or Docker, and keeps every computer
-up to date: the image carries the latest signed builds.
+up to date: the hub checks GitHub hourly for new signed builds and hands
+them to your computers, so you rarely need to touch the container again.
 
 #### Podman
 

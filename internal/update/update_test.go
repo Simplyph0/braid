@@ -123,3 +123,30 @@ func TestNewer(t *testing.T) {
 		}
 	}
 }
+
+func TestMirrorCopiesANewerSignedRelease(t *testing.T) {
+	src := release(t, "v0.5.0", []byte("new build"), nil)
+	dir := t.TempDir()
+	if v, err := Mirror(src+"/update", dir); err != nil || v != "v0.5.0" {
+		t.Fatalf("got %q, %v", v, err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "braid-"+Platform())); string(b) != "new build" {
+		t.Errorf("build: %q", b)
+	}
+	if v, err := Mirror(src+"/update", dir); err != nil || v != "" {
+		t.Errorf("second time should do nothing: %q, %v", v, err)
+	}
+	// A PC installs from the mirrored folder.
+	hub := httptest.NewServer(http.StripPrefix("/update/", http.FileServer(http.Dir(dir))))
+	defer hub.Close()
+	setVersion(t, "v0.4.0")
+	exe := fakeExe(t)
+	if v, err := Install(hub.URL, exe); err != nil || v != "v0.5.0" {
+		t.Fatalf("install from mirror: %q, %v", v, err)
+	}
+	// A tampered source is refused and the folder is left as it was.
+	bad := release(t, "v0.6.0", []byte("x"), func(f map[string][]byte) { f["braid-"+Platform()] = []byte("evil") })
+	if _, err := Mirror(bad+"/update", dir); err == nil {
+		t.Error("mirrored a tampered build")
+	}
+}
