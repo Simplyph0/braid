@@ -1,99 +1,78 @@
 # Braid
 
-Work on a project from any of your PCs without ever merging folders by hand.
+**Work on the same project from all your computers, without ever merging by hand.**
 
-A project is **one timeline**, not a folder copied to every PC. Every PC
-records its changes into the timeline automatically and its folder shows a
-moment of it (normally the newest). Work done apart becomes two strands, and
-Braid joins them by itself. Nothing is ever overwritten without being kept in
-the timeline, and nothing stops to ask you a question.
+Braid keeps each project as one shared, end-to-end encrypted timeline. Every
+computer records its changes into it automatically and shows the newest
+version. Work done on two computers at once is joined for you, and nothing is
+ever overwritten without being kept in the timeline.
 
-Braid succeeds [ClaudeSync](https://github.com/Simplyph0/claudesync).
+- **No sync questions.** Changes to different files or different lines are
+  joined automatically. Where both computers changed the same lines, Claude
+  Code (if installed) merges them by what each side was doing; otherwise
+  that computer's work waits, untouched, until it can be joined.
+- **Git included.** `.git` travels with the project, so every computer has the
+  same branch, commits and uncommitted work.
+- **Everything is undoable.** Show any earlier moment on any computer, or
+  restore it for all of them, from the command line or the web app.
+- **Claude chats come along.** Claude Code conversations for a project follow
+  it between computers.
+- **Your server, your keys.** The hub runs on your own server and only ever
+  stores encrypted data. The web app decrypts in your browser.
+- **Updates itself.** Computers install new signed builds from your hub.
 
-## Status
+Linux (x86-64, ARM64, ARMv7) and Windows (x86-64, ARM64).
 
-Early development. Done: the timeline core (milestone 1), the PC agent
-(milestone 2), most of braiding (milestone 3), Claude merges by intent
-(milestone 4), and the hub with its web app and automatic updates
-(milestone 5).
+## Install
+
+See **[INSTALL.md](INSTALL.md)**. In short:
+
+1. Run the hub on a server (one container).
+2. On each computer:
+
+   ```bash
+   curl -fsSL https://github.com/Simplyph0/braid/releases/latest/download/install.sh | sh
+   braid setup https://your-hub.example.com <token>
+   braid add ~/Projects/my-project
+   braid install
+   ```
+
+## Commands
 
 | | |
 |---|---|
-| Moments, strands, record-before-replace, jump, restore | done |
-| `.git` travels with the project; braided git branches are kept | done |
-| Braiding: fast-forward, different files, different lines, newest wins for binaries | done |
-| Overlapping edits: wait on the PC's own strand until a merger joins them | done |
-| Claude merge by intent, with an optional check command and one retry | done |
-| Moments record what you asked Claude in that folder | done |
-| Claude Code chats travel with their project (every message from every PC, paths rewritten per PC) | done |
-| Claude desktop app's own chat list | not yet: chats show up in `claude --resume`, not the app's sidebar |
-| Agent on each PC (`braid run`), CLI, Linux autostart | done |
-| Hub web app: projects, PCs, timeline, what changed, restore, show a moment on any PC, make a PC match another | done |
-| Hub as a container (`Dockerfile`) | done |
-| Automatic updates: PCs install signed builds from the hub hourly; the hub image updates via Podman | done |
+| `braid status` | what each project is doing |
+| `braid log <project>` | the project's moments, newest first |
+| `braid jump <project> <moment>` | show an earlier moment here (your work is saved first) |
+| `braid follow <project>` | back to the newest |
+| `braid restore <project> <moment>` | make an earlier moment the newest, everywhere |
+| `braid check <project> "<cmd>"` | a command (build, tests) a Claude merge must pass |
+| `braid remove <project>` | stop syncing a folder (nothing is deleted) |
+
+The web app (your hub's address in a browser) does the same from any device,
+including your phone.
 
 ## How it works
 
-- **Moment:** the whole project folder (including `.git`) at one point in
-  time, end-to-end encrypted. Unchanged files are stored once.
-- **main:** the strand every PC follows. A PC that worked offline gets its
-  own strand (`pc/<name>`) until its work is braided in.
-- **Braid order:** fast-forward → different files → different lines of the
-  same text file → Claude merges by intent → else the PC's work waits on its
-  strand (never lost, never mixed).
-- **Safety:** a folder is recorded before anything changes it; a missing
-  folder is never treated as deleted; files being edited or locked by git are
-  left alone; paths from the hub are checked before anything is written.
+A **moment** is the whole project folder at one point in time. Each computer
+records a moment a few seconds after you stop changing files, then publishes
+it to the project's **main** strand. If another computer published first,
+Braid **braids** the two: fast-forward if only one side changed, otherwise
+file-by-file and line-by-line, then Claude for overlapping edits (with no
+tools: it only sees that file and can only answer with the merged text). A
+braid that can't be made leaves that computer's work on its own strand.
 
-The full blueprint: <https://claude.ai/artifact/QwbmgLhKSd5nea4ByjY8N7> (private doc).
+Safety rules: a folder is recorded before anything changes it; a missing
+folder (unplugged drive) pauses instead of counting as deleted; files being
+edited and git's lock files are left alone; paths from the hub are checked
+before anything is written.
 
-## Try it
-
-On the server:
+## Building
 
 ```bash
-braid-hub -data /var/lib/braid -addr :8490
-```
-
-It prints the `braid setup` line to run on each PC, and serves the web app
-on the same address: sign in with the hub token and your passphrase. The web
-app decrypts everything inside your browser (it runs Braid's own code as
-WebAssembly); the hub still only ever sees encrypted data.
-
-Or, better, as the published container image, which also keeps every PC up
-to date: see [docs/SERVER.md](docs/SERVER.md).
-
-**Updates.** Each release (a `v*` tag) is built and signed by GitHub
-Actions and published as the hub image. PCs check the hub hourly and
-install a newer build only if its signature (the release key's) and checksum
-match; the previous build is kept as `braid.old`. Turn it off on a PC with
-`"noUpdate": true` in its config. Then on each PC:
-
-```bash
-braid setup http://<server>:8490 <token>
-braid add ~/Projects/PixelBit
-braid install
-```
-
-`braid status`, `braid log <name>`, `braid jump`, `braid follow` and
-`braid restore` steer it.
-
-When two PCs changed the same lines, Braid asks Claude Code on the PC that
-needs the result to join them (`claude -p`, no tools: it only sees that file
-and can only answer with the merged text). Claude Code must be signed in on
-that PC. To have every Claude merge checked first:
-
-```bash
-braid check PixelBit "go build ./..."
-```
-
-If the check fails, Claude gets its output and one more try; if it still
-fails, that PC's work waits on its own strand and nothing is mixed. Builds are static: nothing to install, and they run
-on old Linux (Debian 12) as well as new.
-
-## Build and test
-
-```bash
-./build.sh      # the web app's engine, then braid and braid-hub, into dist/
+./build.sh   # dist/braid and dist/braid-hub (needs Go 1.27)
 go test ./...
+scripts/demo.sh   # a hub and two pretend computers on this machine
 ```
+
+Braid succeeds [ClaudeSync](https://github.com/Simplyph0/claudesync).

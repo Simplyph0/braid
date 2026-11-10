@@ -32,6 +32,9 @@ jobs:
           push: true
           tags: ghcr.io/simplyph0/braid-hub:latest,ghcr.io/simplyph0/braid-hub:${{ github.ref_name }}
       - name: GitHub release
-        run: gh release create "$GITHUB_REF_NAME" dist/update/* dist/hub-linux-amd64/braid-hub#braid-hub-linux-amd64 --title "$GITHUB_REF_NAME" --generate-notes
+        run: |
+          cp dist/hub-linux-amd64/braid-hub dist/braid-hub-linux-amd64
+          cp dist/hub-linux-arm64/braid-hub dist/braid-hub-linux-arm64
+          gh release create "$GITHUB_REF_NAME" dist/update/* dist/braid-hub-linux-* scripts/install.sh --title "$GITHUB_REF_NAME" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}

@@ -8,14 +8,17 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -37,7 +40,8 @@ const usage = `braid keeps a project the same on all your PCs, as one shared tim
   braid restore <name> <moment>     make an older moment the newest, on every PC
   braid check <name> "<command>"    a command that must pass before a Claude merge is kept ("" to clear)
   braid run                         keep everything in step (what the background service runs)
-  braid install                     start braid run at login (Linux)
+  braid install                     start braid run at login (Linux, Windows)
+  braid uninstall                   stop starting it at login
   braid version                     this build's version (it updates itself from the hub)
 `
 
@@ -85,6 +89,8 @@ func main() {
 		fmt.Println(update.Version)
 	case "install":
 		err = install()
+	case "uninstall":
+		err = uninstall()
 	default:
 		fmt.Print(usage)
 		os.Exit(2)
@@ -335,6 +341,17 @@ func restore(dir string, args []string) error {
 }
 
 func run(dir string) error {
+	if slices.Contains(os.Args, "--background") {
+		detachConsole() // started at sign-in on Windows: no console window
+	}
+	// One braid run per setup: two would write the same folders and state.
+	h := fnv.New32a()
+	h.Write([]byte(dir))
+	lock, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", 47000+h.Sum32()%1000))
+	if err != nil {
+		return errors.New("braid is already running on this PC (see braid status)")
+	}
+	defer lock.Close()
 	if _, err := agent.LoadConfig(dir); err != nil {
 		return err
 	}
@@ -384,24 +401,65 @@ func selfUpdate(ctx context.Context, dir string, lg *log.Logger) {
 }
 
 func install() error {
-	if runtime.GOOS != "linux" {
-		return errors.New("on this system, add `braid run` to your startup apps for now (an installer is coming)")
-	}
 	exe, err := os.Executable()
+	if err == nil {
+		exe, err = filepath.EvalSymlinks(exe)
+	}
 	if err != nil {
 		return err
+	}
+	if runtime.GOOS == "windows" {
+		out, err := exec.Command("reg", "add", `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, "/v", "Braid", "/t", "REG_SZ",
+			"/d", `"`+exe+`" run --background`, "/f").CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("reg: %v: %s", err, out)
+		}
+		if err := exec.Command(exe, "run", "--background").Start(); err != nil {
+			return err
+		}
+		fmt.Println("Braid now starts when you sign in to Windows, and is running. Its log: " + filepath.Join(agent.Dir(), "braid.log"))
+		return nil
 	}
 	home, _ := os.UserHomeDir()
-	unit := filepath.Join(home, ".config", "systemd", "user", "braid.service")
-	os.MkdirAll(filepath.Dir(unit), 0o755)
-	body := "[Unit]\nDescription=Braid: keep project folders in step\n\n[Service]\nExecStart=" + exe + " run\nRestart=on-failure\nRestartSec=10\n\n[Install]\nWantedBy=default.target\n"
-	if err := os.WriteFile(unit, []byte(body), 0o644); err != nil {
+	if _, err := os.Stat("/run/systemd/system"); err == nil {
+		unit := filepath.Join(home, ".config", "systemd", "user", "braid.service")
+		os.MkdirAll(filepath.Dir(unit), 0o755)
+		body := "[Unit]\nDescription=Braid: keep project folders in step\n\n[Service]\nExecStart=" + exe + " run\nRestart=on-failure\nRestartSec=10\n\n[Install]\nWantedBy=default.target\n"
+		if err := os.WriteFile(unit, []byte(body), 0o644); err != nil {
+			return err
+		}
+		out, err := exec.Command("systemctl", "--user", "enable", "--now", "braid.service").CombinedOutput()
+		if err == nil {
+			fmt.Println("Braid now starts when you log in, and is running. Its log: journalctl --user -u braid")
+			return nil
+		}
+		fmt.Printf("systemd didn't take it (%s); using your desktop's startup apps instead.\n", strings.TrimSpace(string(out)))
+		os.Remove(unit)
+	}
+	// No systemd user session: the desktop's autostart (freedesktop.org standard).
+	auto := filepath.Join(home, ".config", "autostart", "braid.desktop")
+	os.MkdirAll(filepath.Dir(auto), 0o755)
+	body := "[Desktop Entry]\nType=Application\nName=Braid\nComment=Keep project folders in step\nExec=\"" + exe + "\" run\nTerminal=false\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n"
+	if err := os.WriteFile(auto, []byte(body), 0o644); err != nil {
 		return err
 	}
-	out, err := exec.Command("systemctl", "--user", "enable", "--now", "braid.service").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("systemctl: %v: %s", err, out)
+	fmt.Println("Braid starts when you next log in to your desktop. To start it now: braid run &")
+	fmt.Println("(No desktop? Start `braid run` from your init system or a crontab @reboot line.)")
+	return nil
+}
+
+func uninstall() error {
+	if runtime.GOOS == "windows" {
+		exec.Command("reg", "delete", `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, "/v", "Braid", "/f").Run()
+		fmt.Println("Braid no longer starts when you sign in. (A copy running now keeps going until you sign out.)")
+		return nil
 	}
-	fmt.Println("Braid now starts at login and is running. Logs: journalctl --user -u braid")
+	home, _ := os.UserHomeDir()
+	if _, err := exec.LookPath("systemctl"); err == nil {
+		exec.Command("systemctl", "--user", "disable", "--now", "braid.service").Run()
+	}
+	os.Remove(filepath.Join(home, ".config", "systemd", "user", "braid.service"))
+	os.Remove(filepath.Join(home, ".config", "autostart", "braid.desktop"))
+	fmt.Println("Braid no longer starts at login. Your folders, timelines and settings are untouched.")
 	return nil
 }

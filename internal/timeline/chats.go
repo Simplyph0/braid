@@ -18,7 +18,7 @@ import (
 // decide. The hub keeps them on the project's "chats" strand.
 
 // projectMark stands for the project folder inside stored chats, so each PC
-// sees its own path (C:\Users\James\Projects\X here, ~/Projects/X there).
+// sees its own path (C:\Users\you\Projects\X here, ~/Projects/X there).
 const projectMark = "@@braid-project@@"
 
 // ChatReport says what a chat sync did.

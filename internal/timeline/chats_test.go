@@ -18,7 +18,7 @@ func chatLine(uuid, cwd, text string) string {
 func TestChatsTravelAndJoin(t *testing.T) {
 	r, _ := NewRepo(&store.Dir{Root: t.TempDir()}, "p", crypt.NewKey())
 	type pc struct{ name, folder, dir string }
-	a := pc{"Desktop", `/home/james/Projects/X`, t.TempDir()}
+	a := pc{"Desktop", `/home/alex/Projects/X`, t.TempDir()}
 	b := pc{"Laptop", `/Users/j/code/X`, t.TempDir()}
 	later := time.Now().Add(time.Hour) // everything has settled
 	sync := func(p pc) ChatReport {
@@ -38,7 +38,7 @@ func TestChatsTravelAndJoin(t *testing.T) {
 	}
 	sync(b)
 	got := read(b, "s1.jsonl")
-	if !strings.Contains(got, jsonPath(b.folder)+`/src"`) || strings.Contains(got, "james") {
+	if !strings.Contains(got, jsonPath(b.folder)+`/src"`) || strings.Contains(got, "alex") {
 		t.Fatalf("paths not rewritten for the laptop: %s", got)
 	}
 	// Both continue the chat apart: every message is kept, once.
