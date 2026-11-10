@@ -12,8 +12,9 @@ Braid succeeds [ClaudeSync](https://github.com/Simplyph0/claudesync).
 
 ## Status
 
-Early development. Done so far: the timeline core (milestone 1) and the
-first braiding rules (most of milestone 3). There's no program to run yet.
+Early development. Done: the timeline core (milestone 1), the PC agent
+(milestone 2), most of braiding (milestone 3), and a bare hub that stores
+timelines (the web app comes in milestone 5).
 
 | | |
 |---|---|
@@ -22,7 +23,7 @@ first braiding rules (most of milestone 3). There's no program to run yet.
 | Braiding: fast-forward, different files, different lines, newest wins for binaries | done |
 | Overlapping edits: wait on the PC's own strand until a merger joins them | done |
 | Claude merge by intent | next (milestone 4) |
-| Agent (background service on each PC) | milestone 2 |
+| Agent on each PC (`braid run`), CLI, Linux autostart | done |
 | Hub and web app | milestone 5 |
 
 ## How it works
@@ -39,6 +40,26 @@ first braiding rules (most of milestone 3). There's no program to run yet.
   left alone; paths from the hub are checked before anything is written.
 
 The full blueprint: <https://claude.ai/artifact/QwbmgLhKSd5nea4ByjY8N7> (private doc).
+
+## Try it
+
+On the server:
+
+```bash
+braid-hub -data /var/lib/braid -addr :8490
+```
+
+It prints the `braid setup` line to run on each PC. Then on each PC:
+
+```bash
+braid setup http://<server>:8490 <token>
+braid add ~/Projects/PixelBit
+braid install
+```
+
+`braid status`, `braid log <name>`, `braid jump`, `braid follow` and
+`braid restore` steer it. Builds are static: nothing to install, and they run
+on old Linux (Debian 12) as well as new.
 
 ## Build and test
 
