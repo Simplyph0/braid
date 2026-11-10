@@ -22,6 +22,7 @@ type pc struct {
 }
 
 func newPC(t *testing.T, url, token, name, pass string) *pc {
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // never touch the real chats
 	dir := t.TempDir()
 	s := &store.HTTP{URL: url, Token: token}
 	key, err := MasterKey(s, pass)

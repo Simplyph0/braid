@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -116,4 +117,12 @@ func inside(cwd, folder string) bool {
 		c, f = strings.ToLower(c), strings.ToLower(f)
 	}
 	return c == f || strings.HasPrefix(c, f+string(filepath.Separator))
+}
+
+var nonAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
+
+// ProjectDir is where Claude Code keeps the chats for a folder: the folder's
+// path with everything but letters and digits turned into "-".
+func ProjectDir(home, folder string) string {
+	return filepath.Join(home, "projects", nonAlnum.ReplaceAllString(filepath.Clean(folder), "-"))
 }

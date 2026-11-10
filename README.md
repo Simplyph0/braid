@@ -25,6 +25,8 @@ Early development. Done: the timeline core (milestone 1), the PC agent
 | Overlapping edits: wait on the PC's own strand until a merger joins them | done |
 | Claude merge by intent, with an optional check command and one retry | done |
 | Moments record what you asked Claude in that folder | done |
+| Claude Code chats travel with their project (every message from every PC, paths rewritten per PC) | done |
+| Claude desktop app's own chat list | not yet: chats show up in `claude --resume`, not the app's sidebar |
 | Agent on each PC (`braid run`), CLI, Linux autostart | done |
 | Hub web app: projects, PCs, timeline, what changed, restore, show a moment on any PC, make a PC match another | done |
 | Hub as a container (`Dockerfile`) | done |

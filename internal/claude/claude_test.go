@@ -161,3 +161,12 @@ func TestIntentFromTranscripts(t *testing.T) {
 		t.Errorf("nothing in that window, got %q", got)
 	}
 }
+
+func TestProjectDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip()
+	}
+	if got := ProjectDir("/h", "/home/user/.config/My Proj"); got != "/h/projects/-home-user--config-My-Proj" {
+		t.Errorf("got %s", got)
+	}
+}

@@ -347,6 +347,13 @@ func (a *Agent) syncOne(ctx context.Context, c *Config, p Project, st *Status) e
 		st.Last = "updated to the newest moment"
 		a.Log.Printf("%s: %s", p.Name, st.Last)
 	}
+	// The project's Claude Code chats come along too.
+	cr, err := w.Repo.SyncChats(claude.ProjectDir(claude.Home(), p.Folder), p.Folder, c.PC, 30*time.Second, time.Now())
+	if err != nil {
+		a.Log.Printf("%s: chats: %v", p.Name, err)
+	} else if cr.Pulled > 0 {
+		a.Log.Printf("%s: brought in %d chat(s) from your other PCs", p.Name, cr.Pulled)
+	}
 	if rep.Busy > 0 {
 		a.Log.Printf("%s: left %d file(s) alone while they're being edited", p.Name, rep.Busy)
 	}
