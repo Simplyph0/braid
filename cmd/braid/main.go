@@ -108,7 +108,10 @@ func setup(dir string, args []string) error {
 	if err != nil {
 		c = &agent.Config{}
 	}
-	c.Hub = args[0]
+	c.Hub = strings.TrimRight(args[0], "/")
+	if !strings.Contains(c.Hub, "://") {
+		c.Hub = "https://" + c.Hub // a bare address means the usual HTTPS one
+	}
 	if c.PC == "" {
 		c.PC, _ = os.Hostname()
 	}
