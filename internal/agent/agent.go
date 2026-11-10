@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Simplyph0/braid/internal/claude"
@@ -180,7 +181,9 @@ type Agent struct {
 	Log    *log.Logger
 	Settle time.Duration
 
-	hub       string // the hub a.Store talks to
+	mu        sync.Mutex // guards ws and published: projects sync side by side
+	busy      sync.Map   // project name -> true while it's syncing
+	hub       string     // the hub a.Store talks to
 	ws        map[string]*timeline.Workspace
 	published map[string]published
 }
@@ -211,45 +214,67 @@ func (a *Agent) Tick(ctx context.Context) error {
 	if err != nil {
 		return nil // not set up yet: nothing to do until it is
 	}
+	a.mu.Lock()
 	if a.Store == nil || a.hub != c.Hub+c.Token { // set up (again) while running
 		a.Store, a.hub, a.ws = c.Store(), c.Hub+c.Token, nil
 	}
 	if a.ws == nil {
 		a.ws = map[string]*timeline.Workspace{}
 	}
+	a.mu.Unlock()
+	// Projects sync side by side (three at a time), so one big folder
+	// doesn't hold up the rest. A project still busy from the last tick is
+	// skipped rather than started twice.
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, 3)
 	for _, p := range c.Projects {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			break
 		}
-		st, _ := ReadStatus(a.Dir, p.Name)
-		if p.Paused {
-			if st.Last != "paused" {
-				st.Last = "paused"
-				a.writeStatus(p.Name, st)
-			}
+		if _, running := a.busy.LoadOrStore(p.Name, true); running {
 			continue
 		}
-		prevErr := st.Error
-		err := a.syncOne(ctx, c, p, &st)
-		st.Error = ""
-		if err != nil {
-			st.Error = err.Error()
-			if st.Error != prevErr { // say it once, not every few seconds
-				a.Log.Printf("%s: %v", p.Name, err)
-			}
-		} else {
-			st.LastSync = time.Now()
-		}
-		a.writeStatus(p.Name, st)
-		a.publish(p, c, st)
+		slots <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer func() { <-slots; wg.Done(); a.busy.Delete(p.Name) }()
+			a.tickOne(ctx, c, p)
+		}()
 	}
-	return nil
+	wg.Wait()
+	return ctx.Err()
+}
+
+func (a *Agent) tickOne(ctx context.Context, c *Config, p Project) {
+	st, _ := ReadStatus(a.Dir, p.Name)
+	if p.Paused {
+		if st.Last != "paused" {
+			st.Last = "paused"
+			a.writeStatus(p.Name, st)
+		}
+		return
+	}
+	prevErr := st.Error
+	err := a.syncOne(ctx, c, p, &st)
+	st.Error = ""
+	if err != nil {
+		st.Error = err.Error()
+		if st.Error != prevErr { // say it once, not every few seconds
+			a.Log.Printf("%s: %v", p.Name, err)
+		}
+	} else {
+		st.LastSync = time.Now()
+	}
+	a.writeStatus(p.Name, st)
+	a.publish(p, c, st)
 }
 
 // publish tells the hub (encrypted) how this PC is doing with a project, for
 // the web app: at once when something changed, else once a minute.
 func (a *Agent) publish(p Project, c *Config, st Status) {
+	a.mu.Lock()
 	w := a.ws[p.Name]
+	a.mu.Unlock()
 	if w == nil {
 		return
 	}
@@ -257,17 +282,22 @@ func (a *Agent) publish(p Project, c *Config, st Status) {
 	cmp := st
 	cmp.LastSync, cmp.Updated = time.Time{}, time.Time{}
 	key, _ := json.Marshal(cmp)
+	a.mu.Lock()
 	if a.published == nil {
 		a.published = map[string]published{}
 	}
-	if last := a.published[p.Name]; last.key == string(key) && time.Since(last.at) < time.Minute {
+	last := a.published[p.Name]
+	a.mu.Unlock()
+	if last.key == string(key) && time.Since(last.at) < time.Minute {
 		return
 	}
 	st.Updated = time.Now()
 	if err := w.Repo.PutNote("status/"+timeline.SafeName(c.PC), st); err != nil {
 		return // the next tick tries again
 	}
+	a.mu.Lock()
 	a.published[p.Name] = published{string(key), time.Now()}
+	a.mu.Unlock()
 }
 
 type published struct {
@@ -276,7 +306,9 @@ type published struct {
 }
 
 func (a *Agent) syncOne(ctx context.Context, c *Config, p Project, st *Status) error {
+	a.mu.Lock()
 	w := a.ws[p.Name]
+	a.mu.Unlock()
 	if w == nil || w.Folder != p.Folder {
 		repo, err := c.Repo(a.Store, p.Name)
 		if err != nil {
@@ -289,7 +321,9 @@ func (a *Agent) syncOne(ctx context.Context, c *Config, p Project, st *Status) e
 		if a.Settle != 0 { // negative: no settling (tests)
 			w.Settle = max(a.Settle, 0)
 		}
+		a.mu.Lock()
 		a.ws[p.Name] = w
+		a.mu.Unlock()
 	}
 	w.Merger, w.Check = nil, nil
 	if !c.NoClaude && claude.Available() {

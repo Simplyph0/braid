@@ -167,3 +167,26 @@ func TestOnlyThePassphraseGetsIn(t *testing.T) {
 		t.Fatalf("the right token was refused: %v", err)
 	}
 }
+
+func TestManyProjectsAllSyncInOneTick(t *testing.T) {
+	hub := httptest.NewServer(store.Handler(&store.Dir{Root: t.TempDir()}))
+	defer hub.Close()
+	p := newPC(t, hub.URL, "Desktop", "correct horse")
+	c, _ := LoadConfig(p.dir)
+	c.Projects = nil
+	for _, n := range []string{"a", "b", "c", "d", "e"} {
+		f := filepath.Join(t.TempDir(), n)
+		os.MkdirAll(f, 0o755)
+		os.WriteFile(filepath.Join(f, "x.txt"), []byte(n), 0o644)
+		c.Projects = append(c.Projects, Project{Name: n, Folder: f})
+	}
+	c.Save(p.dir)
+	if err := p.a.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"a", "b", "c", "d", "e"} {
+		if st, err := ReadStatus(p.dir, n); err != nil || st.Error != "" || st.At == "" {
+			t.Errorf("%s: %+v %v", n, st, err)
+		}
+	}
+}
