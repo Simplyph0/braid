@@ -3,10 +3,14 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/rand"
+	"embed"
 	"encoding/hex"
 	"errors"
 	"flag"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -42,6 +46,57 @@ func main() {
 	}
 	log.Printf("braid hub on %s, data in %s", *addr, *data)
 	log.Printf("connect a PC with: braid setup http://<this-server>%s %s", *addr, token)
-	srv := &http.Server{Addr: *addr, Handler: store.Handler(&store.Dir{Root: *data}, token), ReadHeaderTimeout: 10 * time.Second}
+	log.Printf("web app: http://<this-server>%s (sign in with the same token and your passphrase)", *addr)
+	srv := &http.Server{Addr: *addr, Handler: handler(store.Handler(&store.Dir{Root: *data}, token)), ReadHeaderTimeout: 10 * time.Second}
 	log.Fatal(srv.ListenAndServe())
+}
+
+//go:embed web
+var webFS embed.FS
+
+// handler serves the web app at / and the store API under its own paths.
+// The web app's files are public; everything it shows is encrypted on the
+// hub and decrypted only in the browser.
+func handler(api http.Handler) http.Handler {
+	web, _ := fs.Sub(webFS, "web")
+	files := http.FileServerFS(web)
+	gz := map[string][]byte{} // compressed once: the engine is several MB
+	for _, name := range []string{"braid.wasm", "app.js", "wasm_exec.js", "index.html"} {
+		if b, err := fs.ReadFile(web, name); err == nil {
+			var buf bytes.Buffer
+			zw, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+			zw.Write(b)
+			zw.Close()
+			gz[name] = buf.Bytes()
+		}
+	}
+	types := map[string]string{"braid.wasm": "application/wasm", "app.js": "text/javascript; charset=utf-8",
+		"wasm_exec.js": "text/javascript; charset=utf-8", "index.html": "text/html; charset=utf-8"}
+	mux := http.NewServeMux()
+	for _, p := range []string{"/o/", "/r/", "/refs", "/n/", "/notes"} {
+		mux.Handle(p, api)
+	}
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cache-Control", "no-cache")
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		if name == "" {
+			name = "index.html"
+		}
+		if b, ok := gz[name]; ok && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			w.Header().Set("Content-Type", types[name])
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Header().Set("Vary", "Accept-Encoding")
+			w.Write(b)
+			return
+		}
+		files.ServeHTTP(w, r)
+	})
+	return mux
 }

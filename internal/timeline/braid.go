@@ -126,7 +126,7 @@ func (r *Repo) Braid(ctx context.Context, a, b, pc string, m Merger, check Check
 			take(we, wIn)
 			le, lIn := loser.Files[p]
 			if lIn && strings.HasPrefix(p, ".git/refs/heads/") {
-				out.Files[".git/refs/heads/braid/"+safeName(loserPC)+"/"+strings.TrimPrefix(p, ".git/refs/heads/")] = le
+				out.Files[".git/refs/heads/braid/"+SafeName(loserPC)+"/"+strings.TrimPrefix(p, ".git/refs/heads/")] = le
 			}
 		case !inA || !inB: // deleted on one side, changed on the other: keep the change
 			take(ea, inA)
@@ -218,7 +218,8 @@ func pathDir(p string) string {
 
 var unsafeName = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 
-func safeName(s string) string {
+// SafeName makes a PC name usable in strand and note names.
+func SafeName(s string) string {
 	s = strings.Trim(unsafeName.ReplaceAllString(s, "-"), "-.")
 	if s == "" {
 		return "pc"
@@ -321,7 +322,7 @@ func (r *Repo) braidPackedRefs(out, winner, loser, base *Tree, loserPC string) e
 		if err != nil {
 			return err
 		}
-		out.Files[".git/refs/heads/braid/"+safeName(loserPC)+"/"+name] = Entry{Size: size, Chunks: chunks, Mtime: time.Now().UTC()}
+		out.Files[".git/refs/heads/braid/"+SafeName(loserPC)+"/"+name] = Entry{Size: size, Chunks: chunks, Mtime: time.Now().UTC()}
 	}
 	return nil
 }

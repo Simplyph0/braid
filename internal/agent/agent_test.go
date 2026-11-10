@@ -58,10 +58,35 @@ func (p *pc) read(rel string) string {
 	return string(b)
 }
 
-func (p *pc) setPin(pin string) {
+func (p *pc) setPin(prefix string) {
+	p.t.Helper()
 	c, _ := LoadConfig(p.dir)
-	c.Projects[0].Pin = pin
-	c.Save(p.dir)
+	r, err := c.Repo(p.a.Store, "proj")
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	id := ""
+	if prefix != "" {
+		if id, err = p.a.Resolve(r, prefix); err != nil {
+			p.t.Fatal(err)
+		}
+	}
+	old, _ := r.Tip(PinStrand(c.PC))
+	if err := r.SetTip(PinStrand(c.PC), old, id); err != nil {
+		p.t.Fatal(err)
+	}
+}
+
+// status as the web app sees it: from the hub, decrypted.
+func (p *pc) published() Status {
+	p.t.Helper()
+	c, _ := LoadConfig(p.dir)
+	r, _ := c.Repo(p.a.Store, "proj")
+	var st Status
+	if err := r.Note("status/"+c.PC, &st); err != nil {
+		p.t.Fatal(err)
+	}
+	return st
 }
 
 func TestTwoPCsThroughAHub(t *testing.T) {
@@ -105,6 +130,10 @@ func TestTwoPCsThroughAHub(t *testing.T) {
 	a.tick()
 	if st := b.tick(); len(st.Conflicts) != 1 || st.Error != "" {
 		t.Fatalf("expected a waiting conflict: %+v", st)
+	}
+
+	if st := b.published(); len(st.Conflicts) != 1 || st.PC != "Laptop" || st.Folder != b.folder {
+		t.Fatalf("hub doesn't show the laptop's state: %+v", st)
 	}
 
 	// A missing folder is a problem in status, not a deletion.

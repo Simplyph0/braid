@@ -70,9 +70,9 @@ func main() {
 	case "log":
 		err = history(dir, args)
 	case "jump":
-		err = edit(dir, args, 2, func(p *agent.Project, _ *agent.Config) { p.Pin = args[1] })
+		err = pin(dir, args, 2)
 	case "follow":
-		err = edit(dir, args, 1, func(p *agent.Project, _ *agent.Config) { p.Pin = "" })
+		err = pin(dir, args, 1)
 	case "check":
 		err = edit(dir, args, 2, func(p *agent.Project, _ *agent.Config) { p.Check = args[1] })
 	case "restore":
@@ -268,6 +268,41 @@ func history(dir string, args []string) error {
 		fmt.Printf("%.12s  %s  %-12s %s\n", id, m.Time.Local().Format("Jan 02 15:04:05"), m.PC, intent)
 	}
 	return err
+}
+
+// pin sets, on the hub, which moment this PC shows (none: follow main).
+func pin(dir string, args []string, n int) error {
+	if len(args) != n {
+		fmt.Print(usage)
+		os.Exit(2)
+	}
+	c, err := agent.LoadConfig(dir)
+	if err != nil {
+		return err
+	}
+	r, err := c.Repo(c.Store(), args[0])
+	if err != nil {
+		return err
+	}
+	id := ""
+	if n == 2 {
+		if id, err = (&agent.Agent{}).Resolve(r, args[1]); err != nil {
+			return err
+		}
+	}
+	old, err := r.Tip(agent.PinStrand(c.PC))
+	if err != nil {
+		return err
+	}
+	if old == id {
+		fmt.Println("Already so.")
+		return nil
+	}
+	if err := r.SetTip(agent.PinStrand(c.PC), old, id); err != nil {
+		return err
+	}
+	fmt.Println("Done. The agent applies it at its next sync (a few seconds if braid run is running).")
+	return nil
 }
 
 func restore(dir string, args []string) error {

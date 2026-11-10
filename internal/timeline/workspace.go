@@ -65,7 +65,7 @@ func Open(r *Repo, pc, folder, statePath string) (*Workspace, error) {
 func (w *Workspace) At() string     { return w.st.At }
 func (w *Workspace) Detached() bool { return w.st.Detached }
 
-func (w *Workspace) strand() string { return "pc/" + safeName(w.PC) }
+func (w *Workspace) strand() string { return "pc/" + SafeName(w.PC) }
 
 func (w *Workspace) save() error {
 	b, err := json.Marshal(w.st)

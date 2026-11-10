@@ -26,7 +26,13 @@ type Store interface {
 	// (compare-and-swap). new "" deletes it.
 	SetRef(name, old, new string) error
 	Refs(prefix string) (map[string]string, error)
+	// Notes are small replaceable blobs (a PC's status), kept by name.
+	SetNote(name string, blob []byte) error
+	Note(name string) ([]byte, error)
+	Notes(prefix string) ([]string, error)
 }
+
+const maxNote = 64 << 10
 
 var (
 	idRe   = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -153,4 +159,50 @@ func writeAtomic(p string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp, p)
+}
+
+func (d *Dir) notePath(name string) (string, error) {
+	if !ValidRef(name) {
+		return "", errors.New("bad note name")
+	}
+	return filepath.Join(d.Root, "notes", filepath.FromSlash(name)), nil
+}
+
+func (d *Dir) SetNote(name string, blob []byte) error {
+	if len(blob) > maxNote {
+		return errors.New("note too big")
+	}
+	p, err := d.notePath(name)
+	if err != nil {
+		return err
+	}
+	return writeAtomic(p, blob)
+}
+
+func (d *Dir) Note(name string) ([]byte, error) {
+	p, err := d.notePath(name)
+	if err != nil {
+		return nil, err
+	}
+	b, err := os.ReadFile(p)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNotFound
+	}
+	return b, err
+}
+
+func (d *Dir) Notes(prefix string) ([]string, error) {
+	var out []string
+	root := filepath.Join(d.Root, "notes")
+	err := filepath.WalkDir(root, func(p string, e os.DirEntry, err error) error {
+		if err != nil || e.IsDir() || strings.HasSuffix(p, ".tmp") {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, p)
+		if name := filepath.ToSlash(rel); strings.HasPrefix(name, prefix) {
+			out = append(out, name)
+		}
+		return nil
+	})
+	return out, err
 }

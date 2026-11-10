@@ -14,8 +14,8 @@ Braid succeeds [ClaudeSync](https://github.com/Simplyph0/claudesync).
 
 Early development. Done: the timeline core (milestone 1), the PC agent
 (milestone 2), most of braiding (milestone 3), Claude merges by intent
-(milestone 4), and a bare hub that stores timelines (the web app comes in
-milestone 5).
+(milestone 4), and the hub with its web app (milestone 5, without automatic
+updates yet).
 
 | | |
 |---|---|
@@ -26,7 +26,9 @@ milestone 5).
 | Claude merge by intent, with an optional check command and one retry | done |
 | Moments record what you asked Claude in that folder | done |
 | Agent on each PC (`braid run`), CLI, Linux autostart | done |
-| Hub and web app | milestone 5 |
+| Hub web app: projects, PCs, timeline, what changed, restore, show a moment on any PC, make a PC match another | done |
+| Hub as a container (`Dockerfile`) | done |
+| Automatic updates for PCs and hub | next |
 
 ## How it works
 
@@ -51,7 +53,13 @@ On the server:
 braid-hub -data /var/lib/braid -addr :8490
 ```
 
-It prints the `braid setup` line to run on each PC. Then on each PC:
+It prints the `braid setup` line to run on each PC, and serves the web app
+on the same address: sign in with the hub token and your passphrase. The web
+app decrypts everything inside your browser (it runs Braid's own code as
+WebAssembly); the hub still only ever sees encrypted data.
+
+Or as a container (for Cockpit's Podman): `podman build -t braid-hub .`, then
+run it with a volume on `/data` and port 8490. Then on each PC:
 
 ```bash
 braid setup http://<server>:8490 <token>
@@ -78,5 +86,6 @@ on old Linux (Debian 12) as well as new.
 ## Build and test
 
 ```bash
+./build.sh      # the web app's engine, then braid and braid-hub, into dist/
 go test ./...
 ```

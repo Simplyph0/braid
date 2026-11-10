@@ -27,7 +27,6 @@ import (
 type Project struct {
 	Name   string `json:"name"`
 	Folder string `json:"folder"`
-	Pin    string `json:"pin,omitempty"`   // show this moment instead of following main
 	Check  string `json:"check,omitempty"` // command that must pass on a braid Claude merged, e.g. "go build ./..."
 }
 
@@ -44,6 +43,9 @@ type Config struct {
 
 // Status is what the agent last did for a project, for `braid status`.
 type Status struct {
+	PC        string              `json:"pc"`
+	Folder    string              `json:"folder"`
+	Updated   time.Time           `json:"updated"` // when this PC last reported
 	At        string              `json:"at"`
 	Detached  bool                `json:"detached,omitempty"`
 	Pinned    string              `json:"pinned,omitempty"` // the Pin last applied
@@ -185,7 +187,8 @@ type Agent struct {
 	Log    *log.Logger
 	Settle time.Duration
 
-	ws map[string]*timeline.Workspace
+	ws        map[string]*timeline.Workspace
+	published map[string]published
 }
 
 func (a *Agent) statusPath(name string) string {
@@ -234,8 +237,38 @@ func (a *Agent) Tick(ctx context.Context) error {
 			st.LastSync = time.Now()
 		}
 		a.writeStatus(p.Name, st)
+		a.publish(p, c, st)
 	}
 	return nil
+}
+
+// publish tells the hub (encrypted) how this PC is doing with a project, for
+// the web app: at once when something changed, else once a minute.
+func (a *Agent) publish(p Project, c *Config, st Status) {
+	w := a.ws[p.Name]
+	if w == nil {
+		return
+	}
+	st.PC, st.Folder = c.PC, p.Folder
+	cmp := st
+	cmp.LastSync, cmp.Updated = time.Time{}, time.Time{}
+	key, _ := json.Marshal(cmp)
+	if a.published == nil {
+		a.published = map[string]published{}
+	}
+	if last := a.published[p.Name]; last.key == string(key) && time.Since(last.at) < time.Minute {
+		return
+	}
+	st.Updated = time.Now()
+	if err := w.Repo.PutNote("status/"+timeline.SafeName(c.PC), st); err != nil {
+		return // the next tick tries again
+	}
+	a.published[p.Name] = published{string(key), time.Now()}
+}
+
+type published struct {
+	key string
+	at  time.Time
 }
 
 func (a *Agent) syncOne(ctx context.Context, c *Config, p Project, st *Status) error {
@@ -263,41 +296,48 @@ func (a *Agent) syncOne(ctx context.Context, c *Config, p Project, st *Status) e
 	}
 	folder := p.Folder
 	w.Intent = func(since, until time.Time) string { return claude.Intent(claude.Home(), folder, since, until) }
+	// What to show is set on the hub (by `braid jump` or the web app), so it
+	// can be changed from anywhere.
+	pin, err := w.Repo.Tip(PinStrand(c.PC))
+	if err != nil {
+		return err
+	}
 	var rep timeline.Report
-	var err error
+	said := true // the pin cases describe what they did themselves
 	switch {
-	case p.Pin != "" && st.Pinned != p.Pin:
-		id, err := a.Resolve(w.Repo, p.Pin)
+	case pin != "" && st.Pinned != pin:
+		rep, err = w.Jump(ctx, pin)
 		if err != nil {
 			return err
 		}
-		rep, err = w.Jump(ctx, id)
-		if err != nil {
-			return err
-		}
-		st.Last, st.Pinned = "showing moment "+p.Pin, p.Pin
-		a.Log.Printf("%s: now showing moment %.12s", p.Name, id)
-	case p.Pin == "" && w.Detached():
+		st.Last, st.Pinned = fmt.Sprintf("showing moment %.12s", pin), pin
+		a.Log.Printf("%s: now showing moment %.12s", p.Name, pin)
+	case pin == "" && w.Detached():
 		rep, err = w.Follow(ctx)
 		st.Last, st.Pinned = "following main again", ""
 		a.Log.Printf("%s: following main again", p.Name)
 	default:
 		rep, err = w.Sync(ctx)
+		said = false
 	}
 	if err != nil {
 		return err
 	}
+	hadConflicts := len(st.Conflicts)
 	st.At, st.Detached, st.Conflicts = w.At(), w.Detached(), rep.Conflicts
 	switch {
 	case len(rep.Conflicts) > 0:
 		st.Last = fmt.Sprintf("waiting on its own strand: %d file(s) changed in the same places on two PCs", len(rep.Conflicts))
-		a.Log.Printf("%s: %s", p.Name, st.Last)
+		if hadConflicts != len(rep.Conflicts) { // once, not every few seconds
+			a.Log.Printf("%s: %s", p.Name, st.Last)
+		}
 	case rep.Braided != "":
 		st.Last = "braided this PC's work with the others'"
 		if m, err := w.Repo.Moment(rep.Braided); err == nil && m.Intent != "" {
 			st.Last = m.Intent
 		}
 		a.Log.Printf("%s: %s", p.Name, st.Last)
+	case said:
 	case rep.Recorded != "":
 		st.Last = "recorded a new moment"
 	case rep.Moved:
@@ -309,6 +349,9 @@ func (a *Agent) syncOne(ctx context.Context, c *Config, p Project, st *Status) e
 	}
 	return nil
 }
+
+// PinStrand is the hub ref holding the moment a PC should show ("" = follow main).
+func PinStrand(pc string) string { return "pin/" + timeline.SafeName(pc) }
 
 // resolve turns a moment id or a unique prefix of one into the full id.
 func (a *Agent) Resolve(r *timeline.Repo, prefix string) (string, error) {

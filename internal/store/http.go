@@ -67,6 +67,26 @@ func Handler(s Store, token string) http.Handler {
 			json.NewEncoder(w).Encode(m)
 		}
 	})
+	mux.HandleFunc("GET /n/{name...}", func(w http.ResponseWriter, r *http.Request) {
+		b, err := s.Note(r.PathValue("name"))
+		if !writeErr(w, err) {
+			w.Write(b)
+		}
+	})
+	mux.HandleFunc("PUT /n/{name...}", func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxNote))
+		if err != nil {
+			http.Error(w, "too big", http.StatusRequestEntityTooLarge)
+			return
+		}
+		writeErr(w, s.SetNote(r.PathValue("name"), b))
+	})
+	mux.HandleFunc("GET /notes", func(w http.ResponseWriter, r *http.Request) {
+		l, err := s.Notes(r.URL.Query().Get("prefix"))
+		if !writeErr(w, err) {
+			json.NewEncoder(w).Encode(l)
+		}
+	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if token == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
 			http.Error(w, "wrong token", http.StatusUnauthorized)
@@ -173,4 +193,29 @@ func (h *HTTP) Refs(prefix string) (map[string]string, error) {
 	}
 	m := map[string]string{}
 	return m, json.Unmarshal(b, &m)
+}
+
+func (h *HTTP) SetNote(name string, blob []byte) error {
+	if !ValidRef(name) {
+		return errors.New("bad note name")
+	}
+	_, _, err := h.do("PUT", "/n/"+name, blob)
+	return err
+}
+
+func (h *HTTP) Note(name string) ([]byte, error) {
+	if !ValidRef(name) {
+		return nil, errors.New("bad note name")
+	}
+	b, _, err := h.do("GET", "/n/"+name, nil)
+	return b, err
+}
+
+func (h *HTTP) Notes(prefix string) ([]string, error) {
+	b, _, err := h.do("GET", "/notes?prefix="+url.QueryEscape(prefix), nil)
+	if err != nil {
+		return nil, err
+	}
+	var l []string
+	return l, json.Unmarshal(b, &l)
 }

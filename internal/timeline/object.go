@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -295,3 +296,43 @@ func (r *Repo) History(tip string, max int) ([]string, error) {
 	}
 	return out, nil
 }
+
+// PutNote stores v, encrypted, as this project's note name (replacing it).
+func (r *Repo) PutNote(name string, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	full := r.ref(name)
+	blob, err := crypt.Seal(r.key, b, []byte("note"+full))
+	if err != nil {
+		return err
+	}
+	return r.S.SetNote(full, blob)
+}
+
+// Note reads a note into v.
+func (r *Repo) Note(name string, v any) error {
+	full := r.ref(name)
+	blob, err := r.S.Note(full)
+	if err != nil {
+		return err
+	}
+	b, err := crypt.Open(r.key, blob, []byte("note"+full))
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, v)
+}
+
+// NoteNames lists this project's notes under prefix, without the project.
+func (r *Repo) NoteNames(prefix string) ([]string, error) {
+	l, err := r.S.Notes(r.ref(prefix))
+	for i := range l {
+		l[i] = strings.TrimPrefix(l[i], r.Project+"/")
+	}
+	return l, err
+}
+
+// SameContent reports whether two entries hold the same thing.
+func SameContent(a, b Entry) bool { return a.same(b) }
