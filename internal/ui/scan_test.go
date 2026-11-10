@@ -26,11 +26,13 @@ func TestScanFindsProjects(t *testing.T) {
 	mk("Projects/node_modules/x", "package.json")
 	have := mk("Projects/already", ".git/HEAD")
 	used := mk("elsewhere/gamma") // no markers, but used with Claude
+	broad := mk("elsewhere")      // used with Claude too, but only holds other suggestions
 	mk("Documents/Pictures")
 	os.MkdirAll(filepath.Join(home, ".claude", "projects", "x"), 0o755)
 	os.WriteFile(filepath.Join(home, ".claude", "projects", "x", "s.jsonl"),
 		[]byte(`{"type":"summary"}`+"\n"+`{"type":"user","cwd":"`+used+`"}`+"\n"), 0o644)
 
+	os.WriteFile(filepath.Join(home, ".claude", "projects", "x", "t.jsonl"), []byte(`{"type":"user","cwd":"`+broad+`"}`+"\n"), 0o644)
 	got := ScanFolders(home, []string{have})
 	want := map[string]bool{gitp: true, filepath.Join(home, "Projects/group/beta"): true, used: true}
 	if len(got) != len(want) {
