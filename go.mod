@@ -7,4 +7,8 @@ require (
 	golang.org/x/term v0.48.0
 )
 
-require golang.org/x/sys v0.50.0 // indirect
+require (
+	fyne.io/systray v1.11.0 // indirect
+	github.com/godbus/dbus/v5 v5.1.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
+)

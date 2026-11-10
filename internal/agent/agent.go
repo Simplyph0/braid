@@ -28,7 +28,8 @@ import (
 type Project struct {
 	Name   string `json:"name"`
 	Folder string `json:"folder"`
-	Check  string `json:"check,omitempty"` // command that must pass on a braid Claude merged, e.g. "go build ./..."
+	Check  string `json:"check,omitempty"`  // command that must pass on a braid Claude merged, e.g. "go build ./..."
+	Paused bool   `json:"paused,omitempty"` // nothing is sent or received while paused
 }
 
 // Config is this PC's setup. It holds the key: it's written readable by
@@ -170,6 +171,7 @@ type Agent struct {
 	Log    *log.Logger
 	Settle time.Duration
 
+	hub       string // the hub a.Store talks to
 	ws        map[string]*timeline.Workspace
 	published map[string]published
 }
@@ -198,7 +200,10 @@ func (a *Agent) writeStatus(name string, st Status) {
 func (a *Agent) Tick(ctx context.Context) error {
 	c, err := LoadConfig(a.Dir)
 	if err != nil {
-		return err
+		return nil // not set up yet: nothing to do until it is
+	}
+	if a.Store == nil || a.hub != c.Hub+c.Token { // set up (again) while running
+		a.Store, a.hub, a.ws = c.Store(), c.Hub+c.Token, nil
 	}
 	if a.ws == nil {
 		a.ws = map[string]*timeline.Workspace{}
@@ -208,6 +213,13 @@ func (a *Agent) Tick(ctx context.Context) error {
 			return ctx.Err()
 		}
 		st, _ := ReadStatus(a.Dir, p.Name)
+		if p.Paused {
+			if st.Last != "paused" {
+				st.Last = "paused"
+				a.writeStatus(p.Name, st)
+			}
+			continue
+		}
 		prevErr := st.Error
 		err := a.syncOne(ctx, c, p, &st)
 		st.Error = ""

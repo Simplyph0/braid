@@ -24,12 +24,14 @@ import (
 	"time"
 
 	"github.com/Simplyph0/braid/internal/agent"
+	"github.com/Simplyph0/braid/internal/ui"
 	"github.com/Simplyph0/braid/internal/update"
 	"golang.org/x/term"
 )
 
 const usage = `braid keeps a project the same on all your PCs, as one shared timeline.
 
+  braid                             open the Braid window (starts Braid if it isn't running)
   braid setup <hub-url>             connect this PC to your hub (asks for your passphrase)
   braid add <folder> [name]         start keeping a folder in its project's timeline
   braid remove <name>               stop (files and timeline are kept)
@@ -48,8 +50,7 @@ const usage = `braid keeps a project the same on all your PCs, as one shared tim
 func main() {
 	log.SetFlags(0)
 	if len(os.Args) < 2 {
-		fmt.Print(usage)
-		os.Exit(2)
+		os.Args = append(os.Args, "open") // double-clicked, or just `braid`: show the window
 	}
 	dir := agent.Dir()
 	if d := os.Getenv("BRAID_DIR"); d != "" {
@@ -60,6 +61,10 @@ func main() {
 	switch os.Args[1] {
 	case "setup":
 		err = setup(dir, args)
+	case "open":
+		err = openWindow(dir)
+	case "help", "-h", "--help":
+		fmt.Print(usage)
 	case "add":
 		err = add(dir, args)
 	case "remove":
@@ -153,40 +158,14 @@ func add(dir string, args []string) error {
 	if len(args) < 1 || len(args) > 2 {
 		return errors.New("usage: braid add <folder> [name]")
 	}
-	c, err := agent.LoadConfig(dir)
-	if err != nil {
-		return err
-	}
-	folder, err := filepath.Abs(args[0])
-	if err != nil {
-		return err
-	}
-	if fi, err := os.Stat(folder); err != nil || !fi.IsDir() {
-		if err := os.MkdirAll(folder, 0o755); err != nil {
-			return fmt.Errorf("%s isn't a folder", folder)
-		}
-	}
-	name := filepath.Base(folder)
+	name := ""
 	if len(args) == 2 {
 		name = args[1]
 	}
-	name = strings.Trim(nameRe.ReplaceAllString(name, "-"), "-.")
-	if name == "" {
-		return errors.New("give the project a name: braid add <folder> <name>")
-	}
-	for _, p := range c.Projects {
-		if p.Name == name {
-			return fmt.Errorf("there's already a project called %s here (%s)", name, p.Folder)
-		}
-		if p.Folder == folder {
-			return fmt.Errorf("that folder is already project %s", p.Name)
-		}
-	}
-	c.Projects = append(c.Projects, agent.Project{Name: name, Folder: folder})
-	if err := c.Save(dir); err != nil {
+	if err := ui.AddFolder(dir, args[0], name); err != nil {
 		return err
 	}
-	fmt.Printf("Added %s as project %q. If another PC already has it, this folder fills in at the next sync.\n", folder, name)
+	fmt.Println("Added. If another PC already has this project, the folder fills in at the next sync.")
 	return nil
 }
 
@@ -349,19 +328,24 @@ func restore(dir string, args []string) error {
 	return nil
 }
 
+// lockAddr is where this setup's braid run answers: its window, and the
+// sign that it's running (one per setup: two would write the same folders).
+func lockAddr(dir string) string {
+	h := fnv.New32a()
+	h.Write([]byte(dir))
+	return fmt.Sprintf("127.0.0.1:%d", 47000+h.Sum32()%1000)
+}
+
 func run(dir string) error {
 	if slices.Contains(os.Args, "--background") {
 		detachConsole() // started at sign-in on Windows: no console window
 	}
-	// One braid run per setup: two would write the same folders and state.
-	h := fnv.New32a()
-	h.Write([]byte(dir))
-	lock, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", 47000+h.Sum32()%1000))
+	l, err := net.Listen("tcp", lockAddr(dir))
 	if err != nil {
-		return errors.New("braid is already running on this PC (see braid status)")
+		return errors.New("braid is already running on this PC (braid open shows it)")
 	}
-	defer lock.Close()
-	if _, err := agent.LoadConfig(dir); err != nil {
+	defer l.Close()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	f, err := os.OpenFile(filepath.Join(dir, "braid.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
@@ -370,12 +354,71 @@ func run(dir string) error {
 	}
 	defer f.Close()
 	lg := log.New(io.MultiWriter(os.Stderr, f), "", log.LstdFlags)
-	c, _ := agent.LoadConfig(dir)
-	lg.Printf("braid running on %s, hub %s", c.PC, c.Hub)
+	c, cerr := agent.LoadConfig(dir)
+	if cerr == nil {
+		lg.Printf("braid %s running on %s, hub %s", update.Version, c.PC, c.Hub)
+	} else {
+		lg.Printf("braid %s running, not set up yet", update.Version)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+
+	srv := &ui.Server{Dir: dir, Autostart: func(on bool) error {
+		if on {
+			return install()
+		}
+		return uninstall()
+	}, IsAuto: autostartOn}
+	go srv.Serve(l)
+	show := func() {
+		if err := showWindow(dir); err != nil {
+			lg.Printf("window: %v", err)
+		}
+	}
 	go selfUpdate(ctx, dir, lg)
-	(&agent.Agent{Dir: dir, Store: c.Store(), Log: lg}).Run(ctx, 5*time.Second)
+	done := make(chan struct{})
+	go func() {
+		(&agent.Agent{Dir: dir, Log: lg}).Run(ctx, 5*time.Second)
+		close(done)
+	}()
+	tray := ui.HaveTray() && !slices.Contains(os.Args, "--no-tray")
+	if slices.Contains(os.Args, "--open") || (cerr != nil && tray) {
+		time.AfterFunc(300*time.Millisecond, show) // first start: show how to connect
+	}
+	if tray {
+		ui.RunTray(dir, show, stop, ctx.Done())
+		stop()
+	}
+	<-done
+	return nil
+}
+
+// showWindow opens the window of the braid run that's running.
+func showWindow(dir string) error {
+	key, err := os.ReadFile(ui.KeyFile(dir))
+	if err != nil {
+		return err
+	}
+	return ui.OpenWindow("http://" + lockAddr(dir) + "/?k=" + strings.TrimSpace(string(key)))
+}
+
+// openWindow shows the window, starting braid in the background first if
+// it isn't running.
+func openWindow(dir string) error {
+	if conn, err := net.DialTimeout("tcp", lockAddr(dir), time.Second); err == nil {
+		conn.Close()
+		return showWindow(dir)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(exe, "run", "--background", "--open")
+	detach(cmd)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	fmt.Println("Starting Braid… its window opens in a moment.")
 	return nil
 }
 
@@ -430,6 +473,7 @@ func install() error {
 		return nil
 	}
 	home, _ := os.UserHomeDir()
+	menuEntry(exe)
 	if _, err := os.Stat("/run/systemd/system"); err == nil {
 		unit := filepath.Join(home, ".config", "systemd", "user", "braid.service")
 		os.MkdirAll(filepath.Dir(unit), 0o755)
@@ -457,6 +501,31 @@ func install() error {
 	return nil
 }
 
+// autostartOn reports whether Braid starts at login.
+func autostartOn() bool {
+	if runtime.GOOS == "windows" {
+		return exec.Command("reg", "query", `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, "/v", "Braid").Run() == nil
+	}
+	home, _ := os.UserHomeDir()
+	for _, p := range []string{".config/systemd/user/braid.service", ".config/autostart/braid.desktop"} {
+		if _, err := os.Stat(filepath.Join(home, p)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// menuEntry puts Braid in the Linux app menu.
+func menuEntry(exe string) {
+	home, _ := os.UserHomeDir()
+	iconPath := filepath.Join(home, ".local", "share", "braid", "icon.png")
+	os.MkdirAll(filepath.Dir(iconPath), 0o755)
+	os.WriteFile(iconPath, ui.AppIcon(), 0o644)
+	entry := filepath.Join(home, ".local", "share", "applications", "braid.desktop")
+	os.MkdirAll(filepath.Dir(entry), 0o755)
+	os.WriteFile(entry, []byte("[Desktop Entry]\nType=Application\nName=Braid\nComment=Keep your projects the same on all your PCs\nExec=\""+exe+"\" open\nIcon="+iconPath+"\nTerminal=false\nCategories=Utility;Development;\n"), 0o644)
+}
+
 func uninstall() error {
 	if runtime.GOOS == "windows" {
 		exec.Command("reg", "delete", `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, "/v", "Braid", "/f").Run()
@@ -469,6 +538,7 @@ func uninstall() error {
 	}
 	os.Remove(filepath.Join(home, ".config", "systemd", "user", "braid.service"))
 	os.Remove(filepath.Join(home, ".config", "autostart", "braid.desktop"))
+	os.Remove(filepath.Join(home, ".local", "share", "applications", "braid.desktop"))
 	fmt.Println("Braid no longer starts at login. Your folders, timelines and settings are untouched.")
 	return nil
 }

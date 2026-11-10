@@ -137,6 +137,14 @@ Invoke-WebRequest https://github.com/Simplyph0/braid/releases/latest/download/br
 
 ### Connect it
 
+Open Braid: type `braid`, double-click `braid.exe` on Windows, or (after
+`braid install`) pick **Braid** from your app menu. Its window asks for your
+hub's address and your passphrase, then lets you add folders with
+**Add a folder**. Braid keeps running with an icon by the clock; click it to
+open the window again.
+
+Or from the command line:
+
 ```bash
 braid setup https://your-hub.example.com
 ```

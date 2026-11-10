@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Braid</title>
+<style>
+:root {
+  --bg: #f6f5f2; --card: #ffffff; --text: #1d1c1a; --muted: #6b6862; --line: #e3e0da; --hover: #f0eee9;
+  --accent: #3a5bd9; --accent-text: #ffffff; --ok: #2f8a4c; --warn: #b26a00; --bad: #c0392b; --idle: #9a968f;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161615; --card: #201f1d; --text: #ecebe8; --muted: #a29e97; --line: #34322f; --hover: #2a2926;
+    --accent: #8ea4ff; --accent-text: #10131f; --ok: #5cc27e; --warn: #f0a63a; --bad: #ff7a6b; --idle: #77736d;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 680px; margin: 0 auto; padding: 20px 16px 40px; }
+header { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+header h1 { font-size: 22px; margin: 0; }
+.summary { flex: 1; color: var(--muted); font-size: 14px; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.btn { font: inherit; font-size: 14px; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 8px; padding: 7px 12px; cursor: pointer; white-space: nowrap; }
+.btn:hover { background: var(--hover); }
+.btn:focus-visible, .row:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.btn.primary:hover { filter: brightness(1.05); }
+.btn.danger { color: var(--bad); }
+.btn:disabled { opacity: .55; cursor: default; }
+.list { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.item + .item { border-top: 1px solid var(--line); }
+.row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; cursor: pointer; width: 100%; background: none; border: 0; color: inherit; font: inherit; text-align: left; }
+.rowwrap:hover { background: var(--hover); }
+.rowwrap { display: flex; align-items: center; gap: 8px; padding-right: 14px; }
+.rowwrap .row { flex: 1; min-width: 0; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--idle); flex: none; }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); } .dot.busy { background: var(--accent); }
+.grow { flex: 1; min-width: 0; }
+.name { font-weight: 600; }
+.sub { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.state { font-size: 13px; }
+.state.warn { color: var(--warn); } .state.bad { color: var(--bad); }
+.details { padding: 0 14px 14px 36px; display: flex; flex-direction: column; gap: 10px; }
+.details .muted { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.add { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.empty { text-align: center; padding: 48px 20px; }
+.empty h2 { margin: 0 0 6px; font-size: 18px; }
+.empty p { color: var(--muted); margin: 0 auto 18px; max-width: 420px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+label.field { display: block; margin: 14px 0 4px; font-weight: 600; font-size: 14px; }
+input[type=text], input[type=password] { width: 100%; font: inherit; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+.hint { color: var(--muted); font-size: 13px; margin: 4px 0 0; }
+.error { color: var(--bad); font-size: 14px; margin: 10px 0 0; min-height: 1em; }
+.toggle { display: flex; gap: 12px; align-items: flex-start; padding: 14px; cursor: pointer; }
+.toggle + .toggle { border-top: 1px solid var(--line); }
+.toggle input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--accent); flex: none; }
+.toggle b { display: block; font-weight: 600; }
+.toggle span { color: var(--muted); font-size: 13px; }
+footer { margin-top: 22px; color: var(--muted); font-size: 12.5px; text-align: center; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<main id="app"></main>
+<script src="app.js"></script>
+</body>
+</html>

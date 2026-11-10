@@ -17,7 +17,7 @@ for pc in Desktop Laptop; do
   sed -i "s/\"pc\": \".*\"/\"pc\": \"$pc\"/" "$BRAID_DIR/config.json"
   "$B" add "$D/$pc/project" demo >/dev/null
   # each pretend PC gets its own Claude chats folder
-  CLAUDE_CONFIG_DIR="$D/claude-$pc" "$B" run 2>&1 | sed "s/^/[$pc] /" &
+  CLAUDE_CONFIG_DIR="$D/claude-$pc" "$B" run --no-tray 2>&1 | sed "s/^/[$pc] /" &
 done
 echo "hello from the desktop" > "$D/Desktop/project/notes.txt"
 cat <<MSG

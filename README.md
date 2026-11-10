@@ -28,14 +28,19 @@ Linux (x86-64, ARM64, ARMv7) and Windows (x86-64, ARM64).
 See **[INSTALL.md](INSTALL.md)**. In short:
 
 1. Run the hub on a server (one container).
-2. On each computer:
+2. On each computer, install it and open **Braid** (from your app menu, by
+   double-clicking it, or by typing `braid`). Its window asks for your hub's
+   address and your passphrase; then **Add a folder**. A tray icon by the
+   clock shows whether everything is up to date.
 
    ```bash
    curl -fsSL https://github.com/Simplyph0/braid/releases/latest/download/install.sh | sh
-   braid setup https://your-hub.example.com   # asks for your passphrase: that's all you need
-   braid add ~/Projects/my-project
-   braid install
+   braid install   # start at login, and add Braid to your app menu
+   braid           # open the window
    ```
+
+   Everything the window does also works from the command line
+   (`braid setup`, `braid add`, …).
 
 ## Commands
 
