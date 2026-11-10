@@ -137,13 +137,13 @@ function suggestions() {
     catch (e) { msg.textContent = e.message; label(); }
   });
   return h("div", { class: "card", style: "margin-bottom:14px" },
-    h("div", { style: "font-weight:600" }, `Found ${found.length} project folder${found.length > 1 ? "s" : ""} on this PC`),
+    h("div", { style: "font-weight:600" }, `Found ${found.length} folder${found.length > 1 ? "s" : ""} you've used with Claude Code`),
     h("p", { class: "hint", style: "margin-bottom:10px" }, "Braid will keep the ticked ones the same on all your PCs. Untick any you don't want."),
     h("div", { class: "found" }, found.map(f => {
       const box = h("input", { type: "checkbox", id: "f" + f.path, checked: picked.has(f.path) });
       box.addEventListener("change", () => { box.checked ? picked.add(f.path) : picked.delete(f.path); label(); });
       return h("label", { class: "toggle", for: "f" + f.path, style: "padding:8px 4px" }, box,
-        h("div", {}, h("b", {}, f.name, f.claude ? h("span", { class: "tag" }, "used with Claude") : null), h("span", {}, f.path)));
+        h("div", {}, h("b", {}, f.name, f.git ? h("span", { class: "tag" }, "git") : null), h("span", {}, f.path)));
     })),
     h("div", { class: "actions", style: "margin-top:12px" }, btn,
       h("button", { class: "btn", onclick: () => { dismissed = true; render(); } }, "Not now")),
