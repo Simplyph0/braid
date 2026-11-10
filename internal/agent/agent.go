@@ -21,6 +21,7 @@ import (
 	"github.com/Simplyph0/braid/internal/crypt"
 	"github.com/Simplyph0/braid/internal/store"
 	"github.com/Simplyph0/braid/internal/timeline"
+	"github.com/Simplyph0/braid/internal/update"
 )
 
 // Project is a folder on this PC and the timeline it shows.
@@ -36,8 +37,9 @@ type Config struct {
 	Hub      string    `json:"hub"`
 	Token    string    `json:"token"`
 	PC       string    `json:"pc"`
-	Key      string    `json:"key"`
-	NoClaude bool      `json:"noClaude,omitempty"` // don't ask Claude to merge on this PC // shortcut: the master key sits in this 0600 file; move it to the OS keyring when there's an installer
+	Key      string    `json:"key"`                // shortcut: the master key sits in this 0600 file; move it to the OS keyring when there's an installer
+	NoClaude bool      `json:"noClaude,omitempty"` // don't ask Claude to merge on this PC
+	NoUpdate bool      `json:"noUpdate,omitempty"` // don't install updates from the hub
 	Projects []Project `json:"projects"`
 }
 
@@ -46,6 +48,7 @@ type Status struct {
 	PC        string              `json:"pc"`
 	Folder    string              `json:"folder"`
 	Updated   time.Time           `json:"updated"` // when this PC last reported
+	Version   string              `json:"version"`
 	At        string              `json:"at"`
 	Detached  bool                `json:"detached,omitempty"`
 	Pinned    string              `json:"pinned,omitempty"` // the Pin last applied
@@ -249,7 +252,7 @@ func (a *Agent) publish(p Project, c *Config, st Status) {
 	if w == nil {
 		return
 	}
-	st.PC, st.Folder = c.PC, p.Folder
+	st.PC, st.Folder, st.Version = c.PC, p.Folder, update.Version
 	cmp := st
 	cmp.LastSync, cmp.Updated = time.Time{}, time.Time{}
 	key, _ := json.Marshal(cmp)

@@ -10,7 +10,7 @@ import (
 )
 
 func TestHubServesAppAndAPI(t *testing.T) {
-	srv := httptest.NewServer(handler(store.Handler(&store.Dir{Root: t.TempDir()}, "tok")))
+	srv := httptest.NewServer(handler(store.Handler(&store.Dir{Root: t.TempDir()}, "tok"), ""))
 	defer srv.Close()
 	get := func(path, auth string) *http.Response {
 		req, _ := http.NewRequest("GET", srv.URL+path, nil)

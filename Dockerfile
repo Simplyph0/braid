@@ -1,10 +1,9 @@
-# The hub as a container (Podman in Cockpit: Containers → Create from this image).
-FROM golang:1.27 AS build
-WORKDIR /src
-COPY . .
-RUN ./build.sh
+# The hub as a container image. Made from ./build.sh release (CI does this on
+# every version tag and publishes ghcr.io/simplyph0/braid-hub).
 FROM scratch
-COPY --from=build /src/dist/braid-hub /braid-hub
+ARG TARGETARCH
+COPY dist/hub-linux-${TARGETARCH}/braid-hub /braid-hub
+COPY dist/update /update
 VOLUME /data
 EXPOSE 8490
-ENTRYPOINT ["/braid-hub", "-data", "/data"]
+ENTRYPOINT ["/braid-hub", "-data", "/data", "-updates", "/update"]

@@ -10,6 +10,8 @@ let data = [];
 let current = null; // open project name
 let open = new Set(); // expanded moments
 let timer = null;
+let latest = ""; // newest build the hub offers PCs
+fetch("update/manifest.json", { cache: "no-cache" }).then(r => r.ok ? r.json() : null).then(m => { if (m) latest = m.version; }).catch(() => {});
 
 function h(tag, props, ...kids) {
   const el = document.createElement(tag);
@@ -159,6 +161,7 @@ function pcCard(p, pc) {
     h("div", { class: "muted" }, pc.folder),
     h("div", { class: s.dot === "bad" ? "problem" : s.dot === "warn" ? "waiting" : "muted" }, s.text),
     pc.last ? h("div", { class: "muted" }, "Last: " + pc.last) : null,
+    h("div", { class: "muted" }, "braid " + (pc.version || "?") + (latest && pc.version !== latest && pc.version !== "dev" ? ` · updating to ${latest} within the hour` : "")),
     ...(pc.conflicts || []).map(c => h("div", { class: "waiting" }, c.Path + ": " + c.Why)),
     h("div", { class: "actions" },
       pc.pin ? h("button", { class: "btn primary", onclick: () => act(() => braid.pin(p.name, pc.key, ""), `${pc.pc} goes back to the newest moment.`) }, "Follow the newest") : null,

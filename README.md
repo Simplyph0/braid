@@ -14,8 +14,8 @@ Braid succeeds [ClaudeSync](https://github.com/Simplyph0/claudesync).
 
 Early development. Done: the timeline core (milestone 1), the PC agent
 (milestone 2), most of braiding (milestone 3), Claude merges by intent
-(milestone 4), and the hub with its web app (milestone 5, without automatic
-updates yet).
+(milestone 4), and the hub with its web app and automatic updates
+(milestone 5).
 
 | | |
 |---|---|
@@ -28,7 +28,7 @@ updates yet).
 | Agent on each PC (`braid run`), CLI, Linux autostart | done |
 | Hub web app: projects, PCs, timeline, what changed, restore, show a moment on any PC, make a PC match another | done |
 | Hub as a container (`Dockerfile`) | done |
-| Automatic updates for PCs and hub | next |
+| Automatic updates: PCs install signed builds from the hub hourly; the hub image updates via Podman | done |
 
 ## How it works
 
@@ -58,8 +58,14 @@ on the same address: sign in with the hub token and your passphrase. The web
 app decrypts everything inside your browser (it runs Braid's own code as
 WebAssembly); the hub still only ever sees encrypted data.
 
-Or as a container (for Cockpit's Podman): `podman build -t braid-hub .`, then
-run it with a volume on `/data` and port 8490. Then on each PC:
+Or, better, as the published container image, which also keeps every PC up
+to date: see [docs/SERVER.md](docs/SERVER.md).
+
+**Updates.** Each release (a `v*` tag) is built and signed by GitHub
+Actions and published as the hub image. PCs check the hub hourly and
+install a newer build only if its signature (the release key's) and checksum
+match; the previous build is kept as `braid.old`. Turn it off on a PC with
+`"noUpdate": true` in its config. Then on each PC:
 
 ```bash
 braid setup http://<server>:8490 <token>

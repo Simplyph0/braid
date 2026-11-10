@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Simplyph0/braid/internal/agent"
+	"github.com/Simplyph0/braid/internal/update"
 	"golang.org/x/term"
 )
 
@@ -37,6 +38,7 @@ const usage = `braid keeps a project the same on all your PCs, as one shared tim
   braid check <name> "<command>"    a command that must pass before a Claude merge is kept ("" to clear)
   braid run                         keep everything in step (what the background service runs)
   braid install                     start braid run at login (Linux)
+  braid version                     this build's version (it updates itself from the hub)
 `
 
 func main() {
@@ -79,6 +81,8 @@ func main() {
 		err = restore(dir, args)
 	case "run":
 		err = run(dir)
+	case "version":
+		fmt.Println(update.Version)
 	case "install":
 		err = install()
 	default:
@@ -344,8 +348,39 @@ func run(dir string) error {
 	lg.Printf("braid running on %s, hub %s", c.PC, c.Hub)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	go selfUpdate(ctx, dir, lg)
 	(&agent.Agent{Dir: dir, Store: c.Store(), Log: lg}).Run(ctx, 5*time.Second)
 	return nil
+}
+
+// selfUpdate installs newer signed builds from the hub: at start, then hourly.
+func selfUpdate(ctx context.Context, dir string, lg *log.Logger) {
+	exe, err := os.Executable()
+	if err == nil {
+		exe, err = filepath.EvalSymlinks(exe)
+	}
+	if err != nil {
+		return
+	}
+	for {
+		if c, err := agent.LoadConfig(dir); err == nil && !c.NoUpdate {
+			v, err := update.Install(c.Hub, exe)
+			switch {
+			case err != nil:
+				lg.Printf("update: %v", err)
+			case v != "":
+				lg.Printf("updated %s → %s; restarting", update.Version, v)
+				if err := update.Restart(exe); err != nil {
+					lg.Printf("update: restart: %v (the new version starts next time)", err)
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Hour):
+		}
+	}
 }
 
 func install() error {
