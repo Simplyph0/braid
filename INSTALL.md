@@ -36,7 +36,6 @@ sudo systemctl daemon-reload && sudo systemctl enable --now braid-hub podman-aut
 docker run -d --name braid-hub --restart unless-stopped \
   -p 8490:8490 -v braid-data:/data \
   ghcr.io/simplyph0/braid-hub:latest
-docker logs braid-hub   # shows the token
 ```
 
 Or with Docker Compose, save this as `compose.yaml`:
@@ -56,7 +55,6 @@ volumes:
 
 ```bash
 docker compose up -d
-docker compose logs braid-hub   # shows the token
 ```
 
 To update the hub (and through it, every computer):
@@ -77,7 +75,6 @@ sudo curl -fsSL -o /usr/local/bin/braid-hub \
   https://github.com/Simplyph0/braid/releases/latest/download/braid-hub-linux-amd64   # or -arm64
 sudo chmod +x /usr/local/bin/braid-hub
 sudo mkdir -p /var/lib/braid
-sudo braid-hub -data /var/lib/braid   # first run: note the token, then Ctrl-C
 ```
 
 and run it as a service, e.g. `/etc/systemd/system/braid-hub.service`:
@@ -102,19 +99,18 @@ sudo systemctl enable --now braid-hub
 A plain hub doesn't hand out updates; reinstall `braid` on your computers
 for new versions.
 
-### The token, and HTTPS
+### Your passphrase, and HTTPS
 
-On its first start the hub prints a **token** (also saved in its data folder
-as `token`) and the `braid setup` line for your computers:
-
-```bash
-podman logs braid-hub      # or: docker logs braid-hub, or: journalctl -u braid-hub
-```
+There's no hub password to copy around. **The first computer you set up
+chooses the passphrase** (step 2), and from then on the hub only lets in
+computers and browsers that know it. Set up your first computer soon after
+starting a new hub. To start over with a new passphrase, delete the file
+`auth` in the hub's data folder and restart the hub.
 
 The hub speaks plain HTTP on port 8490. Your files are encrypted before they
-leave each computer, but the token isn't, so outside your home network put
-the hub behind HTTPS: a reverse proxy (Caddy, nginx, Traefik) or a tunnel
-(Cloudflare Tunnel, Tailscale).
+leave each computer, and the passphrase itself never leaves them, but outside
+your home network put the hub behind HTTPS anyway: a reverse proxy (Caddy,
+nginx, Traefik) or a tunnel (Cloudflare Tunnel, Tailscale).
 
 ## 2. Each computer
 
@@ -142,12 +138,13 @@ Invoke-WebRequest https://github.com/Simplyph0/braid/releases/latest/download/br
 ### Connect it
 
 ```bash
-braid setup https://your-hub.example.com <token>
+braid setup https://your-hub.example.com
 ```
 
-It asks for a **passphrase**. Use the same one on every computer: it
-encrypts everything, and the hub never sees it. If you lose it, your data
-can't be recovered.
+It asks for your **passphrase**: on the first computer you choose it, on the
+others you type the same one. It's all you need, and it encrypts everything;
+the hub never sees it. If you lose it, your data can't be recovered, so keep
+it in a password manager.
 
 ```bash
 braid add ~/Projects/my-project   # repeat for each project
@@ -175,7 +172,7 @@ a computer, set `"noClaude": true` in its config file:
 
 ## 3. The web app
 
-Open your hub's address in a browser and sign in with the token and your
+Open your hub's address in a browser and sign in with your
 passphrase. It shows every project, each computer's state and the timeline,
 and can restore moments or point a computer at any moment.
 

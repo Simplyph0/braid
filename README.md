@@ -32,7 +32,7 @@ See **[INSTALL.md](INSTALL.md)**. In short:
 
    ```bash
    curl -fsSL https://github.com/Simplyph0/braid/releases/latest/download/install.sh | sh
-   braid setup https://your-hub.example.com <token>
+   braid setup https://your-hub.example.com   # asks for your passphrase: that's all you need
    braid add ~/Projects/my-project
    braid install
    ```

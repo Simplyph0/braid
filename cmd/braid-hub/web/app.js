@@ -59,9 +59,9 @@ async function boot() {
   const go = new Go();
   const res = await WebAssembly.instantiateStreaming(fetch("braid.wasm"), go.importObject);
   go.run(res.instance);
-  const token = store.get("braid.token"), key = store.get("braid.key");
-  if (token && key) {
-    try { await braid.resume(location.origin, token, key); return home(); }
+  const key = store.get("braid.key");
+  if (key) {
+    try { await braid.resume(location.origin, key); return home(); }
     catch (e) { toast("Please sign in again: " + e.message); }
   }
   login();
@@ -69,7 +69,6 @@ async function boot() {
 
 function login() {
   clearInterval(timer);
-  const token = h("input", { type: "password", id: "token", autocomplete: "off", required: true, value: store.get("braid.token") || "" });
   const pass = h("input", { type: "password", id: "pass", autocomplete: "current-password", required: true });
   const remember = h("input", { type: "checkbox", id: "remember", checked: true });
   const btn = h("button", { class: "btn primary", type: "submit" }, "Open");
@@ -80,15 +79,12 @@ function login() {
       e.preventDefault();
       btn.disabled = true; btn.textContent = "Unlocking… (a few seconds)"; err.textContent = "";
       try {
-        const k = await braid.login(location.origin, token.value.trim(), pass.value);
-        if (remember.checked) { store.set("braid.token", token.value.trim()); store.set("braid.key", k); }
+        const k = await braid.login(location.origin, pass.value);
+        if (remember.checked) { store.set("braid.key", k); }
         else { store.del("braid.key"); }
         home();
       } catch (e2) { err.textContent = e2.message; btn.disabled = false; btn.textContent = "Open"; }
     } },
-      h("label", { for: "token" }, "Hub token"),
-      token,
-      h("p", { class: "muted" }, "The token braid-hub printed when it first started."),
       h("label", { for: "pass" }, "Passphrase"),
       pass,
       h("p", { class: "muted" }, "The same one your PCs use. It stays in this browser."),
@@ -114,7 +110,7 @@ async function home(fromRefresh) {
     show(h("p", { class: "empty" }, "Loading your projects…"));
     return refresh(true);
   }
-  const signOut = h("button", { class: "btn", onclick: () => { store.del("braid.key"); store.del("braid.token"); location.reload(); } }, "Sign out");
+  const signOut = h("button", { class: "btn", onclick: () => { store.del("braid.key"); location.reload(); } }, "Sign out");
   show(
     h("header", {}, h("h1", {}, "Your projects"), signOut),
     data.length ? null : h("p", { class: "empty" }, "No projects yet. On a PC: braid add <folder>"),

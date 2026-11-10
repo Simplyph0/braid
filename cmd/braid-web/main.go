@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Simplyph0/braid/internal/agent"
+	"github.com/Simplyph0/braid/internal/crypt"
 	"github.com/Simplyph0/braid/internal/store"
 	"github.com/Simplyph0/braid/internal/timeline"
 )
@@ -60,28 +61,29 @@ func async(fn func(args []js.Value) (any, error)) js.Func {
 	})
 }
 
-func connect(hub, token, keyHex string) {
+func connect(hub, keyHex string) {
 	mu.Lock()
 	defer mu.Unlock()
-	cfg = &agent.Config{Hub: hub, Token: token, Key: keyHex}
+	key, _ := hex.DecodeString(keyHex)
+	cfg = &agent.Config{Hub: hub, Token: crypt.AuthToken(key), Key: keyHex}
 	st = cfg.Store()
 	repos = map[string]*timeline.Repo{}
 }
 
-// login(hub, token, passphrase) → the master key (hex), to remember if asked.
+// login(hub, passphrase) → the master key (hex), to remember if asked.
 func login(a []js.Value) (any, error) {
-	key, err := agent.MasterKey(&store.HTTP{URL: a[0].String(), Token: a[1].String()}, a[2].String())
+	key, _, err := agent.Connect(a[0].String(), a[1].String())
 	if err != nil {
 		return nil, err
 	}
 	k := hex.EncodeToString(key)
-	connect(a[0].String(), a[1].String(), k)
+	connect(a[0].String(), k)
 	return k, nil
 }
 
-// resume(hub, token, keyHex) reconnects with a remembered key.
+// resume(hub, keyHex) reconnects with a remembered key.
 func resume(a []js.Value) (any, error) {
-	connect(a[0].String(), a[1].String(), a[2].String())
+	connect(a[0].String(), a[1].String())
 	_, err := st.Refs("")
 	return nil, err
 }

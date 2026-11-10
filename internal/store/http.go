@@ -3,21 +3,76 @@ package store
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
 const maxBody = 8 << 20 // a 4 MiB chunk plus encryption overhead fits easily
 
-// Handler serves a Store over HTTP to PCs holding the token.
-func Handler(s Store, token string) http.Handler {
+// Handler serves a hub's store over HTTP. There's no separate password: each
+// PC proves it knows the passphrase by sending a key derived from it (see
+// crypt.AuthToken), which can't be turned back into the encryption key. The
+// hub keeps only a hash of that key, set by the first PC to connect.
+func Handler(d *Dir) http.Handler {
+	var s Store = d
+	authFile := filepath.Join(d.Root, "auth")
+	var mu sync.Mutex
+	authHash, _ := os.ReadFile(authFile)
+	authorized := func(r *http.Request) bool {
+		tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		sum := sha256.Sum256([]byte(tok))
+		mu.Lock()
+		defer mu.Unlock()
+		return ok && len(authHash) == len(sum) && subtle.ConstantTimeCompare(authHash, sum[:]) == 1
+	}
+	public := http.NewServeMux()
+	// The salt for deriving keys from the passphrase. Not a secret.
+	public.HandleFunc("GET /salt", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		salt, err := s.Get("meta", SaltID)
+		if errors.Is(err, ErrNotFound) {
+			salt = make([]byte, 32)
+			rand.Read(salt)
+			err = s.Put("meta", SaltID, salt)
+		}
+		if !writeErr(w, err) {
+			w.Write(salt)
+		}
+	})
+	// The first PC to connect sets the passphrase; later ones must match it.
+	public.HandleFunc("POST /claim", func(w http.ResponseWriter, r *http.Request) {
+		tok, _ := io.ReadAll(io.LimitReader(r.Body, 256))
+		sum := sha256.Sum256(tok)
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case len(tok) < 32:
+			http.Error(w, "bad request", http.StatusBadRequest)
+		case authHash == nil:
+			if err := os.WriteFile(authFile, sum[:], 0o600); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			authHash = sum[:]
+			log.Printf("this hub now belongs to the passphrase of the PC that just set it up")
+		case subtle.ConstantTimeCompare(authHash, sum[:]) != 1:
+			http.Error(w, "different passphrase", http.StatusForbidden)
+		}
+	})
 	mux := http.NewServeMux()
 	mux.HandleFunc("/o/{kind}/{id}", func(w http.ResponseWriter, r *http.Request) {
 		kind, id := r.PathValue("kind"), r.PathValue("id")
@@ -88,8 +143,12 @@ func Handler(s Store, token string) http.Handler {
 		}
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if token == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
-			http.Error(w, "wrong token", http.StatusUnauthorized)
+		if r.URL.Path == "/salt" || r.URL.Path == "/claim" {
+			public.ServeHTTP(w, r)
+			return
+		}
+		if !authorized(r) {
+			http.Error(w, "wrong passphrase", http.StatusUnauthorized)
 			return
 		}
 		mux.ServeHTTP(w, r)
@@ -116,7 +175,28 @@ type HTTP struct {
 	Client     *http.Client
 }
 
-var ErrUnauthorized = errors.New("the hub refused the token")
+var (
+	ErrUnauthorized    = errors.New("the hub doesn't accept this passphrase")
+	ErrOtherPassphrase = errors.New("this hub is already set up with a different passphrase")
+)
+
+// SaltID names the hub's salt object.
+const SaltID = "034a55acca7742398afc3ac5c4a6da8dbd570fef420fbf3385a4058a885268cf" // sha256("braid-salt"), as before
+
+// Salt fetches the hub's salt (it makes one on first use).
+func (h *HTTP) Salt() ([]byte, error) {
+	b, _, err := h.do("GET", "/salt", nil)
+	return b, err
+}
+
+// Claim proves this PC knows the passphrase; the first PC sets it.
+func (h *HTTP) Claim(token string) error {
+	_, code, err := h.do("POST", "/claim", []byte(token))
+	if code == http.StatusForbidden {
+		return ErrOtherPassphrase
+	}
+	return err
+}
 
 func (h *HTTP) do(method, path string, body []byte) ([]byte, int, error) {
 	c := h.Client
@@ -145,6 +225,8 @@ func (h *HTTP) do(method, path string, body []byte) ([]byte, int, error) {
 		return nil, 409, ErrMoved
 	case http.StatusUnauthorized:
 		return nil, 401, ErrUnauthorized
+	case http.StatusForbidden:
+		return nil, 403, ErrOtherPassphrase
 	}
 	return nil, resp.StatusCode, fmt.Errorf("hub: %s: %s", resp.Status, strings.TrimSpace(string(b)))
 }

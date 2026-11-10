@@ -10,7 +10,7 @@ import (
 )
 
 func TestHubServesAppAndAPI(t *testing.T) {
-	srv := httptest.NewServer(handler(store.Handler(&store.Dir{Root: t.TempDir()}, "tok"), ""))
+	srv := httptest.NewServer(handler(store.Handler(&store.Dir{Root: t.TempDir()}), ""))
 	defer srv.Close()
 	get := func(path, auth string) *http.Response {
 		req, _ := http.NewRequest("GET", srv.URL+path, nil)
@@ -33,7 +33,11 @@ func TestHubServesAppAndAPI(t *testing.T) {
 	if r := get("/refs", ""); r.StatusCode != 401 {
 		t.Errorf("API without the token: %d", r.StatusCode)
 	}
-	if r := get("/refs", "tok"); r.StatusCode != 200 {
+	tok := strings.Repeat("ab", 32)
+	if r, err := http.Post(srv.URL+"/claim", "text/plain", strings.NewReader(tok)); err != nil || r.StatusCode != 200 {
+		t.Fatalf("claim: %v %v", r, err)
+	}
+	if r := get("/refs", tok); r.StatusCode != 200 {
 		t.Errorf("API with the token: %d", r.StatusCode)
 	}
 }

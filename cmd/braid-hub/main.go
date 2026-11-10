@@ -5,10 +5,7 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
-	"crypto/rand"
 	"embed"
-	"encoding/hex"
-	"errors"
 	"flag"
 	"io/fs"
 	"log"
@@ -29,26 +26,13 @@ func main() {
 	if err := os.MkdirAll(*data, 0o700); err != nil {
 		log.Fatal(err)
 	}
-	token := os.Getenv("BRAID_TOKEN")
-	if token == "" {
-		tf := filepath.Join(*data, "token")
-		b, err := os.ReadFile(tf)
-		if errors.Is(err, os.ErrNotExist) {
-			r := make([]byte, 24)
-			rand.Read(r)
-			b = []byte(hex.EncodeToString(r))
-			if err := os.WriteFile(tf, b, 0o600); err != nil {
-				log.Fatal(err)
-			}
-		} else if err != nil {
-			log.Fatal(err)
-		}
-		token = strings.TrimSpace(string(b))
-	}
+	d := &store.Dir{Root: *data}
 	log.Printf("braid hub on %s, data in %s", *addr, *data)
-	log.Printf("connect a PC with: braid setup http://<this-server>%s %s", *addr, token)
-	log.Printf("web app: http://<this-server>%s (sign in with the same token and your passphrase)", *addr)
-	srv := &http.Server{Addr: *addr, Handler: handler(store.Handler(&store.Dir{Root: *data}, token), updatesDir(*updates)), ReadHeaderTimeout: 10 * time.Second}
+	if _, err := os.Stat(filepath.Join(*data, "auth")); err != nil {
+		log.Printf("new hub: the first PC to run `braid setup http://<this-server>%s` sets its passphrase", *addr)
+	}
+	log.Printf("web app: http://<this-server>%s (sign in with your passphrase)", *addr)
+	srv := &http.Server{Addr: *addr, Handler: handler(store.Handler(d), updatesDir(*updates)), ReadHeaderTimeout: 10 * time.Second}
 	log.Fatal(srv.ListenAndServe())
 }
 
@@ -74,7 +58,7 @@ func handler(api http.Handler, updates string) http.Handler {
 	types := map[string]string{"braid.wasm": "application/wasm", "app.js": "text/javascript; charset=utf-8",
 		"wasm_exec.js": "text/javascript; charset=utf-8", "index.html": "text/html; charset=utf-8"}
 	mux := http.NewServeMux()
-	for _, p := range []string{"/o/", "/r/", "/refs", "/n/", "/notes"} {
+	for _, p := range []string{"/o/", "/r/", "/refs", "/n/", "/notes", "/salt", "/claim"} {
 		mux.Handle(p, api)
 	}
 	// Signed builds for PCs. Public: a PC checks the signature, not the hub.

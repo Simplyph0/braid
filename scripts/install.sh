@@ -36,7 +36,7 @@ case ":$PATH:" in *":$DIR:"*) ;; *) echo "Note: $DIR isn't on your PATH. Add it,
 cat <<MSG
 
 Next:
-  braid setup <hub-url> <token>    connect to your hub (it asks for your passphrase)
+  braid setup <hub-url>            connect to your hub (it asks for your passphrase)
   braid add ~/Projects/my-project  keep a folder in its timeline
   braid install                    start Braid when you log in
 MSG

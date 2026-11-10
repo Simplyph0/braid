@@ -21,14 +21,14 @@ type pc struct {
 	a      *Agent
 }
 
-func newPC(t *testing.T, url, token, name, pass string) *pc {
+func newPC(t *testing.T, url, name, pass string) *pc {
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // never touch the real chats
 	dir := t.TempDir()
-	s := &store.HTTP{URL: url, Token: token}
-	key, err := MasterKey(s, pass)
+	key, token, err := Connect(url, pass)
 	if err != nil {
 		t.Fatal(err)
 	}
+	s := &store.HTTP{URL: url, Token: token}
 	folder := filepath.Join(t.TempDir(), "proj")
 	os.MkdirAll(folder, 0o755)
 	c := &Config{Hub: url, Token: token, PC: name, Key: hex.EncodeToString(key), NoClaude: true, Projects: []Project{{Name: "proj", Folder: folder}}}
@@ -91,10 +91,10 @@ func (p *pc) published() Status {
 }
 
 func TestTwoPCsThroughAHub(t *testing.T) {
-	hub := httptest.NewServer(store.Handler(&store.Dir{Root: t.TempDir()}, "tok"))
+	hub := httptest.NewServer(store.Handler(&store.Dir{Root: t.TempDir()}))
 	defer hub.Close()
-	a := newPC(t, hub.URL, "tok", "Desktop", "correct horse")
-	b := newPC(t, hub.URL, "tok", "Laptop", "correct horse")
+	a := newPC(t, hub.URL, "Desktop", "correct horse")
+	b := newPC(t, hub.URL, "Laptop", "correct horse")
 
 	a.write("a.txt", "from desktop")
 	if st := a.tick(); st.Error != "" || st.At == "" {
@@ -147,16 +147,23 @@ func TestTwoPCsThroughAHub(t *testing.T) {
 	}
 }
 
-func TestWrongPassphraseAndToken(t *testing.T) {
-	hub := httptest.NewServer(store.Handler(&store.Dir{Root: t.TempDir()}, "tok"))
+func TestOnlyThePassphraseGetsIn(t *testing.T) {
+	hub := httptest.NewServer(store.Handler(&store.Dir{Root: t.TempDir()}))
 	defer hub.Close()
-	if _, err := MasterKey(&store.HTTP{URL: hub.URL, Token: "tok"}, "first passphrase"); err != nil {
+	_, tok, err := Connect(hub.URL, "first passphrase") // sets the hub's passphrase
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := MasterKey(&store.HTTP{URL: hub.URL, Token: "tok"}, "other passphrase"); !errors.Is(err, ErrWrongPassphrase) {
+	if _, again, err := Connect(hub.URL, "first passphrase"); err != nil || again != tok {
+		t.Fatalf("same passphrase again: %v", err)
+	}
+	if _, _, err := Connect(hub.URL, "other passphrase"); !errors.Is(err, ErrWrongPassphrase) {
 		t.Fatalf("want ErrWrongPassphrase, got %v", err)
 	}
-	if _, err := MasterKey(&store.HTTP{URL: hub.URL, Token: "nope"}, "first passphrase"); !errors.Is(err, store.ErrUnauthorized) {
+	if _, err := (&store.HTTP{URL: hub.URL, Token: "nope"}).Refs(""); !errors.Is(err, store.ErrUnauthorized) {
 		t.Fatalf("want ErrUnauthorized, got %v", err)
+	}
+	if _, err := (&store.HTTP{URL: hub.URL, Token: tok}).Refs(""); err != nil {
+		t.Fatalf("the right token was refused: %v", err)
 	}
 }

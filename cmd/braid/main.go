@@ -30,7 +30,7 @@ import (
 
 const usage = `braid keeps a project the same on all your PCs, as one shared timeline.
 
-  braid setup <hub-url> <token>     connect this PC to your hub (asks for your passphrase)
+  braid setup <hub-url>             connect this PC to your hub (asks for your passphrase)
   braid add <folder> [name]         start keeping a folder in its project's timeline
   braid remove <name>               stop (files and timeline are kept)
   braid status                      what each project is doing
@@ -101,14 +101,14 @@ func main() {
 }
 
 func setup(dir string, args []string) error {
-	if len(args) != 2 {
-		return errors.New("usage: braid setup <hub-url> <token>")
+	if len(args) != 1 {
+		return errors.New("usage: braid setup <hub-url>")
 	}
 	c, err := agent.LoadConfig(dir)
 	if err != nil {
 		c = &agent.Config{}
 	}
-	c.Hub, c.Token = args[0], args[1]
+	c.Hub = args[0]
 	if c.PC == "" {
 		c.PC, _ = os.Hostname()
 	}
@@ -122,15 +122,21 @@ func setup(dir string, args []string) error {
 			b = []byte(strings.TrimSpace(line))
 		}
 		pass = string(b)
+		fmt.Print("Again, to be sure: ")
+		b2, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Println()
+		if err == nil && string(b2) != pass {
+			return errors.New("the two didn't match; nothing was changed")
+		}
 	}
 	if len(pass) < 8 {
 		return errors.New("use a passphrase of at least 8 characters")
 	}
-	key, err := agent.MasterKey(c.Store(), pass)
+	key, token, err := agent.Connect(c.Hub, pass)
 	if err != nil {
 		return err
 	}
-	c.Key = hex.EncodeToString(key)
+	c.Key, c.Token = hex.EncodeToString(key), token
 	if err := c.Save(dir); err != nil {
 		return err
 	}

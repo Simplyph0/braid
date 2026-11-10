@@ -74,3 +74,11 @@ func (n Namer) ID(kind string, data []byte) string {
 	h.Write(data)
 	return hex.EncodeToString(h.Sum(nil))
 }
+
+// AuthToken is what a PC shows the hub to prove it knows the passphrase. It's
+// a one-way hash of the master key, so the hub can't get the key from it.
+func AuthToken(master []byte) string {
+	h, _ := blake2b.New256(master)
+	h.Write([]byte("braid-hub-auth"))
+	return hex.EncodeToString(h.Sum(nil))
+}

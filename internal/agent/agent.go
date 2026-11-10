@@ -35,7 +35,7 @@ type Project struct {
 // this user only.
 type Config struct {
 	Hub      string    `json:"hub"`
-	Token    string    `json:"token"`
+	Token    string    `json:"token"` // proves the passphrase to the hub (crypt.AuthToken of Key)
 	PC       string    `json:"pc"`
 	Key      string    `json:"key"`                // shortcut: the master key sits in this 0600 file; move it to the OS keyring when there's an installer
 	NoClaude bool      `json:"noClaude,omitempty"` // don't ask Claude to merge on this PC
@@ -102,44 +102,24 @@ func fixedID(s string) string {
 
 var ErrWrongPassphrase = errors.New("wrong passphrase: it doesn't match the one your other PCs use")
 
-// MasterKey derives the key all your PCs share from the passphrase. The salt
-// lives on the hub (the first PC makes it). A check value proves the
-// passphrase is the same one the other PCs used.
-func MasterKey(s store.Store, passphrase string) ([]byte, error) {
-	saltID := fixedID("braid-salt")
-	salt, err := s.Get("meta", saltID)
-	if errors.Is(err, store.ErrNotFound) {
-		salt = crypt.NewKey()
-		if err := s.Put("meta", saltID, salt); err != nil {
-			return nil, err
-		}
-		salt, err = s.Get("meta", saltID) // another PC may have got there first
-	}
+// Connect turns the passphrase into the master key all your PCs share (the
+// salt lives on the hub) and the token that proves it to the hub. The first
+// PC to connect to a new hub sets its passphrase.
+func Connect(hub, passphrase string) (master []byte, token string, err error) {
+	h := &store.HTTP{URL: hub}
+	salt, err := h.Salt()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	key := crypt.DeriveKey(passphrase, salt)
-	checkID := fixedID("braid-check")
-	check, err := s.Get("meta", checkID)
-	if errors.Is(err, store.ErrNotFound) {
-		sealed, err := crypt.Seal(key, []byte("braid"), []byte("check"))
-		if err != nil {
-			return nil, err
+	master = crypt.DeriveKey(passphrase, salt)
+	token = crypt.AuthToken(master)
+	if err := h.Claim(token); err != nil {
+		if errors.Is(err, store.ErrOtherPassphrase) {
+			return nil, "", ErrWrongPassphrase
 		}
-		if err := s.Put("meta", checkID, sealed); err != nil {
-			return nil, err
-		}
-		check, err = s.Get("meta", checkID)
-		if err != nil {
-			return nil, err
-		}
-	} else if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	if _, err := crypt.Open(key, check, []byte("check")); err != nil {
-		return nil, ErrWrongPassphrase
-	}
-	return key, nil
+	return master, token, nil
 }
 
 // ProjectKey returns a project's own key (made on first use, kept on the
