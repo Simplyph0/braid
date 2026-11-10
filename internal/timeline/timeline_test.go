@@ -228,8 +228,8 @@ func TestOverlapWaitsOnItsOwnStrand(t *testing.T) {
 
 type fakeMerger struct{}
 
-func (fakeMerger) Merge(_ context.Context, _ string, _, ours, theirs []byte, _, _ string) ([]byte, error) {
-	return []byte(strings.TrimSpace(string(ours)) + "+" + string(theirs)), nil
+func (fakeMerger) Merge(_ context.Context, in MergeInput) ([]byte, string, error) {
+	return []byte(strings.TrimSpace(string(in.Ours)) + "+" + string(in.Theirs)), "joined both", nil
 }
 
 func TestBinaryNewestWinsOtherKept(t *testing.T) {

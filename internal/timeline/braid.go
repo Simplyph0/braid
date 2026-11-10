@@ -5,17 +5,30 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 )
 
-// Merger joins two versions of a text file whose changes overlap. Braid's
-// Claude merger (reading the intent of each side) plugs in here.
-type Merger interface {
-	Merge(ctx context.Context, path string, base, ours, theirs []byte, intentOurs, intentTheirs string) ([]byte, error)
+// MergeInput is one file changed in the same places on two strands.
+type MergeInput struct {
+	Path                     string
+	Base, Ours, Theirs       []byte // Base is empty when both sides added the file
+	OursPC, TheirsPC         string
+	IntentOurs, IntentTheirs string // what each side was doing, from its moments
+	Hint                     string // why the previous attempt was rejected (the check's output)
 }
+
+// Merger joins such a file, saying in a few words what it combined. Braid's
+// Claude merger plugs in here.
+type Merger interface {
+	Merge(ctx context.Context, in MergeInput) (merged []byte, summary string, err error)
+}
+
+// Check runs the project's check (build, tests) on a braid in dir.
+type Check func(ctx context.Context, dir string) error
 
 // Conflict is a path that couldn't be braided.
 type Conflict struct {
@@ -26,7 +39,10 @@ type Conflict struct {
 // Braid joins strands a and b into one new moment made by pc. When it can't
 // (overlapping text changes and no merger, or the merger failed) it returns
 // the conflicts and makes nothing: both strands stay as they are.
-func (r *Repo) Braid(ctx context.Context, a, b, pc string, m Merger) (string, []Conflict, error) {
+//
+// When the merger joined any file and check is set, the braid is checked
+// first; if the check fails, the merger gets one more try with its output.
+func (r *Repo) Braid(ctx context.Context, a, b, pc string, m Merger, check Check) (string, []Conflict, error) {
 	base, err := r.base(a, b)
 	if err != nil {
 		return "", nil, err
@@ -65,8 +81,18 @@ func (r *Repo) Braid(ctx context.Context, a, b, pc string, m Merger) (string, []
 		winner, loser, loserPC = tb, ta, ma.PC
 	}
 
+	intentA, err := r.sideIntent(base, a)
+	if err != nil {
+		return "", nil, err
+	}
+	intentB, err := r.sideIntent(base, b)
+	if err != nil {
+		return "", nil, err
+	}
 	out := &Tree{Files: map[string]Entry{}}
 	var conflicts []Conflict
+	merged := map[string]MergeInput{} // files the merger joined
+	var summaries []string
 	paths := map[string]bool{}
 	for _, t := range []*Tree{ta, tb, t0} {
 		for p := range t.Files {
@@ -106,13 +132,18 @@ func (r *Repo) Braid(ctx context.Context, a, b, pc string, m Merger) (string, []
 			take(ea, inA)
 			take(eb, inB)
 		case ea.isFile() && eb.isFile():
-			e, c, err := r.mergeFile(ctx, p, e0, in0, ea, eb, ma, mb, aWins, m)
+			e, c, in, sum, err := r.mergeFile(ctx, p, e0, in0, ea, eb, aWins, m,
+				MergeInput{OursPC: ma.PC, TheirsPC: mb.PC, IntentOurs: intentA, IntentTheirs: intentB})
 			if err != nil {
 				return "", nil, err
 			}
 			if c != "" {
 				conflicts = append(conflicts, Conflict{Path: p, Why: c})
 				continue
+			}
+			if in != nil {
+				merged[p] = *in
+				summaries = append(summaries, sum)
 			}
 			out.Files[p] = e
 		default: // a folder on one side, a file or link on the other
@@ -135,12 +166,45 @@ func (r *Repo) Braid(ctx context.Context, a, b, pc string, m Merger) (string, []
 	if err := r.braidPackedRefs(out, winner, loser, t0, loserPC); err != nil {
 		return "", nil, err
 	}
+	if len(merged) > 0 && check != nil {
+		cerr := r.check(ctx, out, check)
+		if cerr != nil { // one more try, telling the merger what went wrong
+			summaries = nil
+			for p, in := range merged {
+				in.Hint = cerr.Error()
+				data, sum, err := m.Merge(ctx, in)
+				if err != nil {
+					return "", []Conflict{{Path: p, Why: "the merge failed the project's check: " + cerr.Error()}}, nil
+				}
+				size, chunks, err := r.putBytes(data)
+				if err != nil {
+					return "", nil, err
+				}
+				e := out.Files[p]
+				e.Size, e.Chunks = size, chunks
+				out.Files[p] = e
+				summaries = append(summaries, sum)
+			}
+			if cerr = r.check(ctx, out, check); cerr != nil {
+				for p := range merged {
+					conflicts = append(conflicts, Conflict{Path: p, Why: "the merge failed the project's check: " + cerr.Error()})
+				}
+				sort.Slice(conflicts, func(i, j int) bool { return conflicts[i].Path < conflicts[j].Path })
+				return "", conflicts, nil
+			}
+		}
+	}
+	intent := fmt.Sprintf("Braided %s's work with %s's", ma.PC, mb.PC)
+	if len(summaries) > 0 {
+		sort.Strings(summaries)
+		intent += ": " + strings.Join(summaries, "; ")
+	}
 	tid, err := r.PutTree(out)
 	if err != nil {
 		return "", nil, err
 	}
 	mid, err := r.PutMoment(&Moment{Tree: tid, Parents: []string{a, b}, PC: pc, Time: time.Now().UTC(),
-		Intent: fmt.Sprintf("Braided %s's work with %s's", ma.PC, mb.PC)})
+		Intent: intent})
 	return mid, nil, err
 }
 
@@ -164,7 +228,8 @@ func safeName(s string) string {
 
 // mergeFile joins two changed versions of one file. It returns a reason
 // instead when it can't.
-func (r *Repo) mergeFile(ctx context.Context, p string, e0 Entry, in0 bool, ea, eb Entry, ma, mb *Moment, aWins bool, m Merger) (Entry, string, error) {
+// in is set when the merger did the joining.
+func (r *Repo) mergeFile(ctx context.Context, p string, e0 Entry, in0 bool, ea, eb Entry, aWins bool, m Merger, in MergeInput) (e Entry, why string, used *MergeInput, summary string, err error) {
 	newest := func() Entry {
 		if aWins {
 			return ea
@@ -173,39 +238,44 @@ func (r *Repo) mergeFile(ctx context.Context, p string, e0 Entry, in0 bool, ea, 
 	}
 	da, err := r.read(ea)
 	if err != nil {
-		return Entry{}, "", err
+		return Entry{}, "", nil, "", err
 	}
 	db, err := r.read(eb)
 	if err != nil {
-		return Entry{}, "", err
+		return Entry{}, "", nil, "", err
 	}
 	var d0 []byte
 	if in0 && e0.isFile() {
 		if d0, err = r.read(e0); err != nil {
-			return Entry{}, "", err
+			return Entry{}, "", nil, "", err
 		}
 	}
 	if !isText(da) || !isText(db) {
-		return newest(), "", nil // can't merge pictures and such: the newer one wins, the other stays in the timeline
+		return newest(), "", nil, "", nil // can't merge pictures and such: the newer one wins, the other stays in the timeline
 	}
 	merged, ok := merge3(d0, da, db)
+	why = "both sides changed the same lines"
 	if !ok && m != nil {
-		if out, err := m.Merge(ctx, p, d0, da, db, ma.Intent, mb.Intent); err == nil {
-			merged, ok = out, true
+		in.Path, in.Base, in.Ours, in.Theirs = p, d0, da, db
+		out, sum, merr := m.Merge(ctx, in)
+		if merr == nil {
+			merged, ok, used, summary = out, true, &in, sum
+		} else {
+			why += "; Claude couldn't join them: " + merr.Error()
 		}
 	}
 	if !ok {
-		return Entry{}, "both sides changed the same lines", nil
+		return Entry{}, why, nil, "", nil
 	}
 	size, chunks, err := r.putBytes(merged)
 	if err != nil {
-		return Entry{}, "", err
+		return Entry{}, "", nil, "", err
 	}
 	mt := ea.Mtime
 	if eb.Mtime.After(mt) {
 		mt = eb.Mtime
 	}
-	return Entry{Size: size, Chunks: chunks, Exec: ea.Exec || eb.Exec, Mtime: mt}, "", nil
+	return Entry{Size: size, Chunks: chunks, Exec: ea.Exec || eb.Exec, Mtime: mt}, "", used, summary, nil
 }
 
 func isText(b []byte) bool {
@@ -269,4 +339,39 @@ func parsePacked(b []byte) map[string]string {
 		}
 	}
 	return out
+}
+
+// sideIntent sums up what a strand did since base: the intents of its
+// moments, newest first.
+func (r *Repo) sideIntent(base, tip string) (string, error) {
+	var parts []string
+	seen := map[string]bool{}
+	for id := tip; id != "" && id != base && len(parts) < 8; {
+		m, err := r.Moment(id)
+		if err != nil {
+			return "", err
+		}
+		if m.Intent != "" && !seen[m.Intent] {
+			seen[m.Intent] = true
+			parts = append(parts, m.Intent)
+		}
+		if len(m.Parents) == 0 {
+			break
+		}
+		id = m.Parents[0]
+	}
+	return strings.Join(parts, " · "), nil
+}
+
+// check writes the tree to a scratch folder and runs the project's check there.
+func (r *Repo) check(ctx context.Context, t *Tree, check Check) error {
+	dir, err := os.MkdirTemp("", "braid-check-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	if _, err := r.apply(dir, &Tree{Files: map[string]Entry{}}, t, map[string]seen{}); err != nil {
+		return err
+	}
+	return check(ctx, dir)
 }

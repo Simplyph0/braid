@@ -11,10 +11,13 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
+	"github.com/Simplyph0/braid/internal/claude"
 	"github.com/Simplyph0/braid/internal/crypt"
 	"github.com/Simplyph0/braid/internal/store"
 	"github.com/Simplyph0/braid/internal/timeline"
@@ -24,7 +27,8 @@ import (
 type Project struct {
 	Name   string `json:"name"`
 	Folder string `json:"folder"`
-	Pin    string `json:"pin,omitempty"` // show this moment instead of following main
+	Pin    string `json:"pin,omitempty"`   // show this moment instead of following main
+	Check  string `json:"check,omitempty"` // command that must pass on a braid Claude merged, e.g. "go build ./..."
 }
 
 // Config is this PC's setup. It holds the key: it's written readable by
@@ -33,7 +37,8 @@ type Config struct {
 	Hub      string    `json:"hub"`
 	Token    string    `json:"token"`
 	PC       string    `json:"pc"`
-	Key      string    `json:"key"` // shortcut: the master key sits in this 0600 file; move it to the OS keyring when there's an installer
+	Key      string    `json:"key"`
+	NoClaude bool      `json:"noClaude,omitempty"` // don't ask Claude to merge on this PC // shortcut: the master key sits in this 0600 file; move it to the OS keyring when there's an installer
 	Projects []Project `json:"projects"`
 }
 
@@ -249,6 +254,15 @@ func (a *Agent) syncOne(ctx context.Context, c *Config, p Project, st *Status) e
 		}
 		a.ws[p.Name] = w
 	}
+	w.Merger, w.Check = nil, nil
+	if !c.NoClaude && claude.Available() {
+		w.Merger = &claude.Merger{}
+	}
+	if p.Check != "" {
+		w.Check = shellCheck(p.Check)
+	}
+	folder := p.Folder
+	w.Intent = func(since, until time.Time) string { return claude.Intent(claude.Home(), folder, since, until) }
 	var rep timeline.Report
 	var err error
 	switch {
@@ -280,6 +294,9 @@ func (a *Agent) syncOne(ctx context.Context, c *Config, p Project, st *Status) e
 		a.Log.Printf("%s: %s", p.Name, st.Last)
 	case rep.Braided != "":
 		st.Last = "braided this PC's work with the others'"
+		if m, err := w.Repo.Moment(rep.Braided); err == nil && m.Intent != "" {
+			st.Last = m.Intent
+		}
 		a.Log.Printf("%s: %s", p.Name, st.Last)
 	case rep.Recorded != "":
 		st.Last = "recorded a new moment"
@@ -329,5 +346,26 @@ func (a *Agent) Run(ctx context.Context, every time.Duration) {
 			return
 		case <-time.After(every):
 		}
+	}
+}
+
+// shellCheck runs a project's check command in the folder it's given.
+func shellCheck(command string) timeline.Check {
+	return func(ctx context.Context, dir string) error {
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "sh", "-c", command)
+		if runtime.GOOS == "windows" {
+			cmd = exec.CommandContext(ctx, "cmd", "/C", command)
+		}
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			if len(out) > 2000 {
+				out = out[len(out)-2000:]
+			}
+			return fmt.Errorf("%q failed (%v): %s", command, err, strings.TrimSpace(string(out)))
+		}
+		return nil
 	}
 }

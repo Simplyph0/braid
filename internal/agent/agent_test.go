@@ -30,7 +30,7 @@ func newPC(t *testing.T, url, token, name, pass string) *pc {
 	}
 	folder := filepath.Join(t.TempDir(), "proj")
 	os.MkdirAll(folder, 0o755)
-	c := &Config{Hub: url, Token: token, PC: name, Key: hex.EncodeToString(key), Projects: []Project{{Name: "proj", Folder: folder}}}
+	c := &Config{Hub: url, Token: token, PC: name, Key: hex.EncodeToString(key), NoClaude: true, Projects: []Project{{Name: "proj", Folder: folder}}}
 	if err := c.Save(dir); err != nil {
 		t.Fatal(err)
 	}

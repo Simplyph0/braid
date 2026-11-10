@@ -34,6 +34,7 @@ const usage = `braid keeps a project the same on all your PCs, as one shared tim
   braid jump <name> <moment>        show an older moment here (your work is kept first)
   braid follow <name>               go back to showing the newest moment
   braid restore <name> <moment>     make an older moment the newest, on every PC
+  braid check <name> "<command>"    a command that must pass before a Claude merge is kept ("" to clear)
   braid run                         keep everything in step (what the background service runs)
   braid install                     start braid run at login (Linux)
 `
@@ -72,6 +73,8 @@ func main() {
 		err = edit(dir, args, 2, func(p *agent.Project, _ *agent.Config) { p.Pin = args[1] })
 	case "follow":
 		err = edit(dir, args, 1, func(p *agent.Project, _ *agent.Config) { p.Pin = "" })
+	case "check":
+		err = edit(dir, args, 2, func(p *agent.Project, _ *agent.Config) { p.Check = args[1] })
 	case "restore":
 		err = restore(dir, args)
 	case "run":

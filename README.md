@@ -13,8 +13,9 @@ Braid succeeds [ClaudeSync](https://github.com/Simplyph0/claudesync).
 ## Status
 
 Early development. Done: the timeline core (milestone 1), the PC agent
-(milestone 2), most of braiding (milestone 3), and a bare hub that stores
-timelines (the web app comes in milestone 5).
+(milestone 2), most of braiding (milestone 3), Claude merges by intent
+(milestone 4), and a bare hub that stores timelines (the web app comes in
+milestone 5).
 
 | | |
 |---|---|
@@ -22,7 +23,8 @@ timelines (the web app comes in milestone 5).
 | `.git` travels with the project; braided git branches are kept | done |
 | Braiding: fast-forward, different files, different lines, newest wins for binaries | done |
 | Overlapping edits: wait on the PC's own strand until a merger joins them | done |
-| Claude merge by intent | next (milestone 4) |
+| Claude merge by intent, with an optional check command and one retry | done |
+| Moments record what you asked Claude in that folder | done |
 | Agent on each PC (`braid run`), CLI, Linux autostart | done |
 | Hub and web app | milestone 5 |
 
@@ -58,7 +60,19 @@ braid install
 ```
 
 `braid status`, `braid log <name>`, `braid jump`, `braid follow` and
-`braid restore` steer it. Builds are static: nothing to install, and they run
+`braid restore` steer it.
+
+When two PCs changed the same lines, Braid asks Claude Code on the PC that
+needs the result to join them (`claude -p`, no tools: it only sees that file
+and can only answer with the merged text). Claude Code must be signed in on
+that PC. To have every Claude merge checked first:
+
+```bash
+braid check PixelBit "go build ./..."
+```
+
+If the check fails, Claude gets its output and one more try; if it still
+fails, that PC's work waits on its own strand and nothing is mixed. Builds are static: nothing to install, and they run
 on old Linux (Debian 12) as well as new.
 
 ## Build and test

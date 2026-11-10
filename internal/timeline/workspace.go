@@ -21,7 +21,11 @@ type Workspace struct {
 	StatePath string
 	Settle    time.Duration // a file changed this recently is still being written
 	Merger    Merger
-	Now       func() time.Time
+	Check     Check
+	// Intent says what was being done in the folder between two times (from
+	// the Claude chats there); it's recorded with each moment.
+	Intent func(since, until time.Time) string
+	Now    func() time.Time
 
 	st wsState
 }
@@ -103,8 +107,15 @@ func (w *Workspace) record(intent string) (string, error) {
 		return "", nil // an empty new folder: nothing to record yet
 	}
 	var parents []string
+	var since time.Time
 	if w.st.At != "" {
 		parents = []string{w.st.At}
+		if m, err := w.Repo.Moment(w.st.At); err == nil {
+			since = m.Time
+		}
+	}
+	if intent == "" && w.Intent != nil {
+		intent = w.Intent(since, w.Now())
 	}
 	id, err := w.Repo.PutMoment(&Moment{Tree: tid, Parents: parents, PC: w.PC, Time: w.Now().UTC(), Intent: intent})
 	if err != nil {
@@ -196,7 +207,7 @@ func (w *Workspace) Sync(ctx context.Context) (Report, error) {
 			break
 		}
 		// Both moved on: braid.
-		b, conflicts, err := w.Repo.Braid(ctx, main, at, w.PC, w.Merger)
+		b, conflicts, err := w.Repo.Braid(ctx, main, at, w.PC, w.Merger, w.Check)
 		if err != nil {
 			return rep, err
 		}
