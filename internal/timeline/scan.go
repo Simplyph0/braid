@@ -1,6 +1,7 @@
 package timeline
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -52,7 +53,7 @@ func gitBusy(root string) bool {
 // scan reads the folder into a tree, storing new content. A file changed
 // within settle of now is still being written: its last recorded version
 // (prev) stands in for it, so half-written files are never recorded.
-func (r *Repo) scan(root string, prev *Tree, cache map[string]seen, settle time.Duration, now time.Time) (*Tree, error) {
+func (r *Repo) scan(ctx context.Context, root string, prev *Tree, cache map[string]seen, settle time.Duration, now time.Time) (*Tree, error) {
 	fi, err := os.Stat(root)
 	if err != nil || !fi.IsDir() {
 		return nil, ErrFolderMissing
@@ -65,6 +66,9 @@ func (r *Repo) scan(root string, prev *Tree, cache map[string]seen, settle time.
 		}
 	}
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if ctx.Err() != nil { // paused or removed while a big folder is being read
+			return ctx.Err()
+		}
 		if p == root {
 			return err
 		}

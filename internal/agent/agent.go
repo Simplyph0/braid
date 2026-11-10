@@ -255,8 +255,44 @@ func (a *Agent) tickOne(ctx context.Context, c *Config, p Project) {
 		return
 	}
 	prevErr := st.Error
+	if prevErr != "" { // trying again: don't keep showing the old failure meanwhile
+		st.Error, st.Last = "", "trying again…"
+		a.writeStatus(p.Name, st)
+	}
+	// Pausing or removing a project stops it at once, even in the middle
+	// of a big upload (the config is looked at every couple of seconds).
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		t := time.NewTicker(2 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				cur, err := LoadConfig(a.Dir)
+				if err != nil {
+					continue
+				}
+				still := false
+				for _, q := range cur.Projects {
+					if q.Name == p.Name && !q.Paused && q.Folder == p.Folder {
+						still = true
+					}
+				}
+				if !still {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
 	err := a.syncOne(ctx, c, p, &st)
 	st.Error = ""
+	if errors.Is(err, context.Canceled) {
+		return // stopped on purpose; its status is whatever pausing or removing left
+	}
 	if err != nil {
 		st.Error = err.Error()
 		if st.Error != prevErr { // say it once, not every few seconds

@@ -424,3 +424,21 @@ func TestGitRepoTravelsAndBraids(t *testing.T) {
 		eq(t, p.name+" both files there", p.files(), []string{"a.txt", "desk.txt", "lap.txt"})
 	}
 }
+
+func TestSyncStopsWhenCancelled(t *testing.T) {
+	w := newWorld(t)
+	a := w.pc("Desktop")
+	a.write("a.txt", "1")
+	a.write("b/c.txt", "2")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := a.ws.Sync(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("want context.Canceled, got %v", err)
+	}
+	if tip, _ := w.repo().Tip("main"); tip != "" || a.ws.At() != "" {
+		t.Error("something was recorded after cancelling")
+	}
+	if r := a.sync(); r.Recorded == "" {
+		t.Error("a later sync should work normally")
+	}
+}

@@ -83,7 +83,7 @@ func (w *Workspace) save() error {
 }
 
 // record saves the folder as a new moment if it changed since At.
-func (w *Workspace) record(intent string) (string, error) {
+func (w *Workspace) record(ctx context.Context, intent string) (string, error) {
 	if gitBusy(w.Folder) {
 		return "", ErrGitBusy
 	}
@@ -91,7 +91,7 @@ func (w *Workspace) record(intent string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	t, err := w.Repo.scan(w.Folder, prev, w.st.Seen, w.Settle, w.Now())
+	t, err := w.Repo.scan(ctx, w.Folder, prev, w.st.Seen, w.Settle, w.Now())
 	if err != nil {
 		return "", err
 	}
@@ -152,7 +152,7 @@ func (w *Workspace) Sync(ctx context.Context) (Report, error) {
 	if fi, err := os.Stat(w.Folder); err != nil || !fi.IsDir() {
 		return rep, ErrFolderMissing // missing is not deleted: nothing is recorded
 	}
-	rec, err := w.record("")
+	rec, err := w.record(ctx, "")
 	if err != nil {
 		return rep, err
 	}
