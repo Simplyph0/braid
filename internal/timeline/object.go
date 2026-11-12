@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -336,3 +337,55 @@ func (r *Repo) NoteNames(prefix string) ([]string, error) {
 
 // SameContent reports whether two entries hold the same thing.
 func SameContent(a, b Entry) bool { return a.same(b) }
+
+// Change is one path a moment changed.
+type Change struct {
+	Path string `json:"path"`
+	Kind string `json:"kind"` // added, changed or removed
+}
+
+// Changes says which files moment id changed compared with its first parent.
+// The .git folder's many files are counted, not listed.
+func (r *Repo) Changes(id string) (files []Change, git int, err error) {
+	m, err := r.Moment(id)
+	if err != nil {
+		return nil, 0, err
+	}
+	parent := ""
+	if len(m.Parents) > 0 {
+		parent = m.Parents[0]
+	}
+	before, err := r.MomentTree(parent)
+	if err != nil {
+		return nil, 0, err
+	}
+	after, err := r.Tree(m.Tree)
+	if err != nil {
+		return nil, 0, err
+	}
+	files = []Change{}
+	note := func(p, kind string) {
+		if strings.HasPrefix(p, ".git/") {
+			git++
+		} else {
+			files = append(files, Change{p, kind})
+		}
+	}
+	for p, e := range after.Files {
+		if e.Dir {
+			continue
+		}
+		if b, had := before.Files[p]; !had {
+			note(p, "added")
+		} else if !b.same(e) {
+			note(p, "changed")
+		}
+	}
+	for p, e := range before.Files {
+		if _, ok := after.Files[p]; !ok && !e.Dir {
+			note(p, "removed")
+		}
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	return files, git, nil
+}

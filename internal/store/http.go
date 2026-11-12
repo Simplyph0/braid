@@ -32,7 +32,7 @@ func Handler(d *Dir) http.Handler { return HandlerWith(d, time.Minute) }
 // calls it offline.
 func HandlerWith(d *Dir, offlineAfter time.Duration) http.Handler {
 	var s Store = d
-	presence := NewPresence(d.Root, offlineAfter)
+	presence := NewPresence(d.Root, d.Settings(HubSettings{OfflineSeconds: int(offlineAfter.Seconds())}).offline())
 	authFile := filepath.Join(d.Root, "auth")
 	var mu sync.Mutex
 	authHash, _ := os.ReadFile(authFile)
@@ -129,7 +129,23 @@ func HandlerWith(d *Dir, offlineAfter time.Duration) http.Handler {
 		}
 	})
 	mux.HandleFunc("GET /pcs", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{"offlineAfterSeconds": int(presence.OfflineAfter.Seconds()), "pcs": presence.List()})
+		json.NewEncoder(w).Encode(map[string]any{"offlineAfterSeconds": int(presence.After().Seconds()), "pcs": presence.List()})
+	})
+	// The hub's own settings, for the web app.
+	mux.HandleFunc("GET /hubsettings", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(d.Settings(HubSettings{OfflineSeconds: int(presence.After().Seconds()), CheckMinutes: 60, AutoFetch: true}))
+	})
+	mux.HandleFunc("PUT /hubsettings", func(w http.ResponseWriter, r *http.Request) {
+		var hs HubSettings
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&hs); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if err := d.SaveSettings(hs); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		presence.SetAfter(time.Duration(hs.OfflineSeconds) * time.Second)
 	})
 	mux.HandleFunc("GET /refs", func(w http.ResponseWriter, r *http.Request) {
 		m, err := s.Refs(r.URL.Query().Get("prefix"))
@@ -331,4 +347,23 @@ func (h *HTTP) PCs() ([]PC, error) {
 	}
 	var out struct{ PCs []PC }
 	return out.PCs, json.Unmarshal(b, &out)
+}
+
+func (s HubSettings) offline() time.Duration { return time.Duration(s.OfflineSeconds) * time.Second }
+
+// HubSettings reads the hub's settings.
+func (h *HTTP) HubSettings() (HubSettings, error) {
+	var s HubSettings
+	b, _, err := h.do("GET", "/hubsettings", nil)
+	if err != nil {
+		return s, err
+	}
+	return s, json.Unmarshal(b, &s)
+}
+
+// SetHubSettings changes them; the hub applies them at once.
+func (h *HTTP) SetHubSettings(s HubSettings) error {
+	b, _ := json.Marshal(s)
+	_, _, err := h.do("PUT", "/hubsettings", b)
+	return err
 }

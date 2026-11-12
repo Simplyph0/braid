@@ -40,6 +40,20 @@ func NewPresence(dir string, offlineAfter time.Duration) *Presence {
 	return p
 }
 
+// After is how long a PC may stay quiet before it counts as offline.
+func (p *Presence) After() time.Duration {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.OfflineAfter
+}
+
+// SetAfter changes it (5 seconds or more).
+func (p *Presence) SetAfter(d time.Duration) {
+	p.mu.Lock()
+	p.OfflineAfter = max(d, 5*time.Second)
+	p.mu.Unlock()
+}
+
 // Beat records that name just phoned home.
 func (p *Presence) Beat(name string) bool {
 	if !pcNameRe.MatchString(name) {

@@ -30,12 +30,14 @@ var (
 
 func main() {
 	js.Global().Set("braid", js.ValueOf(map[string]any{
-		"login":    async(login),
-		"resume":   async(resume),
-		"overview": async(overview),
-		"changes":  async(changes),
-		"restore":  async(restore),
-		"pin":      async(pin),
+		"login":          async(login),
+		"resume":         async(resume),
+		"overview":       async(overview),
+		"changes":        async(changes),
+		"restore":        async(restore),
+		"pin":            async(pin),
+		"hubSettings":    async(hubSettings),
+		"setHubSettings": async(setHubSettings),
 	}))
 	select {}
 }
@@ -214,58 +216,15 @@ func changes(a []js.Value) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	m, err := r.Moment(a[1].String())
+	files, git, err := r.Changes(a[1].String())
 	if err != nil {
 		return nil, err
 	}
-	parent := ""
-	if len(m.Parents) > 0 {
-		parent = m.Parents[0]
-	}
-	before, err := r.MomentTree(parent)
-	if err != nil {
-		return nil, err
-	}
-	after, err := r.Tree(m.Tree)
-	if err != nil {
-		return nil, err
-	}
-	type change struct {
-		Path, Kind string
-	}
+	type change struct{ Path, Kind string }
 	list := []change{}
-	git := 0
-	for p, e := range after.Files {
-		if e.Dir {
-			continue
-		}
-		b, had := before.Files[p]
-		kind := ""
-		switch {
-		case !had:
-			kind = "added"
-		case !timeline.SameContent(b, e):
-			kind = "changed"
-		}
-		if kind == "" {
-			continue
-		}
-		if strings.HasPrefix(p, ".git/") {
-			git++
-			continue
-		}
-		list = append(list, change{p, kind})
+	for _, f := range files {
+		list = append(list, change{f.Path, f.Kind})
 	}
-	for p, e := range before.Files {
-		if _, ok := after.Files[p]; !ok && !e.Dir {
-			if strings.HasPrefix(p, ".git/") {
-				git++
-				continue
-			}
-			list = append(list, change{p, "removed"})
-		}
-	}
-	sort.Slice(list, func(i, j int) bool { return list[i].Path < list[j].Path })
 	return json.Marshal(map[string]any{"files": list, "git": git})
 }
 
@@ -293,4 +252,36 @@ func pin(a []js.Value) (any, error) {
 		return nil, nil
 	}
 	return nil, r.SetTip(ref, old, a[2].String())
+}
+
+// hubSettings() → the hub's own settings.
+func hubSettings(_ []js.Value) (any, error) {
+	h, err := httpStore()
+	if err != nil {
+		return nil, err
+	}
+	hs, err := h.HubSettings()
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(hs)
+}
+
+// setHubSettings(offlineSeconds, checkMinutes, autoFetch)
+func setHubSettings(a []js.Value) (any, error) {
+	h, err := httpStore()
+	if err != nil {
+		return nil, err
+	}
+	return nil, h.SetHubSettings(store.HubSettings{OfflineSeconds: a[0].Int(), CheckMinutes: a[1].Int(), AutoFetch: a[2].Bool()})
+}
+
+func httpStore() (*store.HTTP, error) {
+	mu.Lock()
+	defer mu.Unlock()
+	h, ok := st.(*store.HTTP)
+	if !ok {
+		return nil, errors.New("not signed in")
+	}
+	return h, nil
 }

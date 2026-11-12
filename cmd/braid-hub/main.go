@@ -36,6 +36,12 @@ func main() {
 		log.Printf("new hub: the first PC to run `braid setup http://<this-server>%s` sets its passphrase", *addr)
 	}
 	log.Printf("web app: http://<this-server>%s (sign in with your passphrase)", *addr)
+	// The flags are only the starting point: once saved (here, or from the web
+	// app), settings.json decides.
+	def := store.HubSettings{OfflineSeconds: max(int(offline.Seconds()), 5), CheckMinutes: max(int(every.Minutes()), 1), AutoFetch: *mirror != ""}
+	if _, err := os.Stat(filepath.Join(*data, "settings.json")); err != nil {
+		d.SaveSettings(def)
+	}
 	ud := updatesDir(*updates)
 	if ud == "" {
 		ud = filepath.Join(*data, "update")
@@ -43,12 +49,15 @@ func main() {
 	if *mirror != "" {
 		go func() { // keep the builds PCs get current, so the hub itself rarely needs updating
 			for {
-				if v, err := update.Mirror(*mirror, ud); err != nil {
-					log.Printf("fetching new builds: %v", err)
-				} else if v != "" {
-					log.Printf("now offering PCs braid %s", v)
+				s := d.Settings(def) // changed live from the web app
+				if s.AutoFetch {
+					if v, err := update.Mirror(*mirror, ud); err != nil {
+						log.Printf("fetching new builds: %v", err)
+					} else if v != "" {
+						log.Printf("now offering PCs braid %s", v)
+					}
 				}
-				time.Sleep(max(*every, time.Minute))
+				time.Sleep(s.Every())
 			}
 		}()
 	}

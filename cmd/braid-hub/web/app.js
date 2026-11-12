@@ -112,9 +112,10 @@ async function home(fromRefresh) {
     show(h("p", { class: "empty" }, "Loading your projects…"));
     return refresh(true);
   }
+  const settingsBtn = h("button", { class: "btn", onclick: hubSettingsView }, "Hub settings");
   const signOut = h("button", { class: "btn", onclick: () => { store.del("braid.key"); location.reload(); } }, "Sign out");
   show(
-    h("header", {}, h("h1", {}, "Your projects"), signOut),
+    h("header", {}, h("h1", {}, "Your projects"), settingsBtn, signOut),
     data.length ? null : h("p", { class: "empty" }, "No projects yet. On a PC: braid add <folder>"),
     ...data.map(p => {
       const last = p.moments[0];
@@ -204,3 +205,32 @@ async function act(fn, ok) {
 }
 
 boot().catch(e => { show(h("p", { class: "problem" }, "Braid couldn't start in this browser: " + e.message)); });
+
+// The hub's own settings: they apply at once, with no restart.
+async function hubSettingsView() {
+  clearInterval(timer);
+  const backBtn = h("button", { class: "btn", onclick: () => home() }, "← Projects");
+  show(h("header", {}, backBtn, h("h1", {}, "Hub settings")), h("p", { class: "muted" }, "Loading…"));
+  let hs;
+  try { hs = JSON.parse(await braid.hubSettings()); }
+  catch (e) { return show(h("header", {}, backBtn, h("h1", {}, "Hub settings")), h("p", { class: "problem" }, e.message + " (an older hub can't change settings from here)")); }
+  const opts = (list, cur) => list.map(([v, label]) => h("option", { value: v, selected: v === cur }, label));
+  const offline = h("select", { class: "btn", id: "off" }, ...opts([[5, "5 seconds"], [30, "30 seconds"], [60, "1 minute"], [120, "2 minutes"], [300, "5 minutes"], [900, "15 minutes"]], hs.offlineSeconds));
+  if (![5, 30, 60, 120, 300, 900].includes(hs.offlineSeconds)) offline.append(h("option", { value: hs.offlineSeconds, selected: true }, hs.offlineSeconds + " seconds"));
+  const check = h("select", { class: "btn", id: "chk" }, ...opts([[1, "every minute"], [5, "every 5 minutes"], [15, "every 15 minutes"], [60, "every hour"], [1440, "once a day"]], hs.checkMinutes));
+  if (![1, 5, 15, 60, 1440].includes(hs.checkMinutes)) check.append(h("option", { value: hs.checkMinutes, selected: true }, `every ${hs.checkMinutes} min`));
+  const fetchBox = h("input", { type: "checkbox", id: "fetch", checked: hs.autoFetch });
+  const msg = h("p", { class: "problem", role: "alert" });
+  const save = h("button", { class: "btn primary", onclick: async () => {
+    try { await braid.setHubSettings(+offline.value, +check.value, fetchBox.checked); toast("Saved. The hub uses it now."); msg.textContent = ""; }
+    catch (e) { msg.textContent = e.message; }
+  } }, "Save");
+  show(h("header", {}, backBtn, h("h1", {}, "Hub settings")),
+    h("div", { class: "card" },
+      h("label", { for: "off", style: "display:block;font-weight:600;margin-bottom:4px" }, "Call a PC offline after"),
+      h("p", { class: "muted", style: "margin:0 0 8px" }, "Every PC phones home every 30 seconds. If the hub hears nothing for this long, the PC shows as offline."), offline,
+      h("label", { for: "chk", style: "display:block;font-weight:600;margin:18px 0 4px" }, "Look for new Braid versions"),
+      h("p", { class: "muted", style: "margin:0 0 8px" }, "The hub fetches new signed versions from GitHub and hands them to your PCs."), check,
+      h("label", { class: "toggle", for: "fetch", style: "padding:14px 0 0" }, fetchBox, h("div", {}, h("b", {}, "Fetch new versions automatically"), h("span", {}, "Turn off to keep the versions the hub has."))),
+      h("div", { style: "margin-top:16px" }, save), msg));
+}

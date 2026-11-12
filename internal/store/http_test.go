@@ -54,3 +54,43 @@ func TestHubReportsWhoPhonedHome(t *testing.T) {
 		t.Error("someone without the passphrase phoned home")
 	}
 }
+
+func TestHubSettingsApplyAtOnce(t *testing.T) {
+	d := &Dir{Root: t.TempDir()}
+	srv := httptest.NewServer(HandlerWith(d, time.Minute))
+	defer srv.Close()
+	h := &HTTP{URL: srv.URL}
+	h.Claim(strings.Repeat("cd", 32))
+	h.Token = strings.Repeat("cd", 32)
+	got, err := h.HubSettings()
+	if err != nil || got.OfflineSeconds != 60 {
+		t.Fatalf("defaults: %+v %v", got, err)
+	}
+	if err := h.SetHubSettings(HubSettings{OfflineSeconds: 5, CheckMinutes: 1, AutoFetch: false}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := h.HubSettings(); got.OfflineSeconds != 5 || got.CheckMinutes != 1 || got.AutoFetch {
+		t.Errorf("not saved: %+v", got)
+	}
+	if err := h.SetHubSettings(HubSettings{OfflineSeconds: 1, CheckMinutes: 1}); err == nil {
+		t.Error("an offline time under 5 s was accepted")
+	}
+	if err := h.SetHubSettings(HubSettings{OfflineSeconds: 60, CheckMinutes: 0}); err == nil {
+		t.Error("an update check under 1 min was accepted")
+	}
+	if d.Settings(HubSettings{}).OfflineSeconds != 5 {
+		t.Error("settings aren't kept on disk")
+	}
+	if err := (&HTTP{URL: srv.URL, Token: "nope"}).SetHubSettings(HubSettings{OfflineSeconds: 60, CheckMinutes: 60}); err == nil {
+		t.Error("someone without the passphrase changed the settings")
+	}
+	// A hub restart keeps them.
+	srv2 := httptest.NewServer(HandlerWith(d, time.Minute))
+	defer srv2.Close()
+	if pcs := (&HTTP{URL: srv2.URL, Token: h.Token}); true {
+		got, _ := pcs.HubSettings()
+		if got.OfflineSeconds != 5 {
+			t.Errorf("after a restart: %+v", got)
+		}
+	}
+}

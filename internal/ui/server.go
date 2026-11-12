@@ -61,6 +61,13 @@ func (s *Server) Handler(addr string) http.Handler {
 	mux.HandleFunc("POST /api/add", s.add)
 	mux.HandleFunc("POST /api/pick", s.pick)
 	mux.HandleFunc("GET /api/scan", s.scan)
+	mux.HandleFunc("GET /api/hub", s.hubProjects)
+	mux.HandleFunc("POST /api/restoreproject", s.restoreProject)
+	mux.HandleFunc("GET /api/timeline", s.timeline)
+	mux.HandleFunc("GET /api/changes", s.changes)
+	mux.HandleFunc("POST /api/moment", s.moment)
+	mux.HandleFunc("POST /api/check", s.check)
+	mux.HandleFunc("GET /api/log", s.log)
 	mux.HandleFunc("POST /api/addmany", s.addMany)
 	mux.HandleFunc("POST /api/project", s.project)
 	mux.HandleFunc("POST /api/settings", s.settings)
@@ -127,7 +134,8 @@ func (s *Server) state(w http.ResponseWriter, _ *http.Request) {
 		reply(w, map[string]any{"setUp": false, "version": update.Version}, nil)
 		return
 	}
-	out := map[string]any{"setUp": true, "pc": c.PC, "hub": c.Hub, "version": update.Version,
+	home, _ := os.UserHomeDir()
+	out := map[string]any{"setUp": true, "home": home, "pc": c.PC, "hub": c.Hub, "version": update.Version,
 		"noClaude": c.NoClaude, "noUpdate": c.NoUpdate, "updateMinutes": int(c.UpdateEvery().Minutes()), "autostart": s.IsAuto != nil && s.IsAuto()}
 	ps := []projectView{}
 	for _, p := range c.Projects {
@@ -295,6 +303,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		NoClaude, NoUpdate, Autostart *bool
 		UpdateMinutes                 *int
+		PCName                        *string
 	}
 	if err := decode(r, &req); err != nil {
 		reply(w, nil, err)
@@ -310,6 +319,14 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.NoUpdate != nil {
 		c.NoUpdate = *req.NoUpdate
+	}
+	if req.PCName != nil {
+		n := strings.TrimSpace(*req.PCName)
+		if n == "" || nameRe.MatchString(n) || len(n) > 60 {
+			reply(w, nil, errors.New("use letters, numbers, dots, dashes or underscores for this PC's name"))
+			return
+		}
+		c.PC = n
 	}
 	if req.UpdateMinutes != nil {
 		if *req.UpdateMinutes < 1 || *req.UpdateMinutes > 1440 {

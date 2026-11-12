@@ -52,32 +52,40 @@ async function refresh() {
     found = [];
     try { found = (await api("scan")).folders || []; picked = new Set(found.map(f => f.path)); } catch {}
   }
+  if (st.setUp && view !== "home" && view !== "settings") return; // those screens load once, not every few seconds
   render();
 }
 
 function render() {
-  if (!st.setUp) return setup();
+  if (!st.setUp || view === "setup") return setup();
   if (view === "settings") return settings();
+  if (view === "history") return history();
+  if (view === "hub") return hubView();
+  if (view === "log") return logView();
   home();
 }
 
+const goto = v => { view = v; render(); };
+const back = (to, label) => h("button", { class: "btn", onclick: () => goto(to) }, label || "← Back");
+
 function setup(err) {
   typing = true;
-  const hub = h("input", { type: "text", id: "hub", placeholder: "braid.example.com", autocomplete: "url", required: true });
+  const changing = st.setUp; // connecting to a different hub, or re-entering the passphrase
+  const hub = h("input", { type: "text", id: "hub", placeholder: "braid.example.com", autocomplete: "url", required: true, value: changing ? st.hub : "" });
   const pass = h("input", { type: "password", id: "pass", autocomplete: "new-password", required: true, minlength: "8" });
   const again = h("input", { type: "password", id: "again", autocomplete: "new-password", required: true });
   const msg = h("p", { class: "error", role: "alert" }, err || "");
   const go = h("button", { class: "btn primary", type: "submit" }, "Connect");
   show(
-    h("header", {}, h("h1", {}, "Braid")),
+    h("header", {}, changing ? back("settings") : null, h("h1", {}, changing ? "Change hub" : "Braid")),
     h("form", { class: "card", onsubmit: async e => {
       e.preventDefault();
       if (pass.value !== again.value) { msg.textContent = "The two passphrases don't match."; return; }
       go.disabled = true; go.textContent = "Connecting… (a few seconds)"; msg.textContent = "";
-      try { await api("setup", { Hub: hub.value, Passphrase: pass.value }); typing = false; refresh(); }
+      try { await api("setup", { Hub: hub.value, Passphrase: pass.value }); typing = false; view = "home"; found = null; refresh(); }
       catch (e2) { msg.textContent = e2.message; go.disabled = false; go.textContent = "Connect"; }
     } },
-      h("h2", { style: "margin:0 0 4px;font-size:18px" }, "Connect this PC"),
+      h("h2", { style: "margin:0 0 4px;font-size:18px" }, changing ? "Connect to a different hub" : "Connect this PC"),
       h("p", { class: "hint" }, "Braid keeps your projects the same on all your PCs, through your own hub."),
       h("label", { class: "field", for: "hub" }, "Hub address"), hub,
       h("label", { class: "field", for: "pass" }, "Passphrase"), pass,
@@ -112,14 +120,16 @@ function home() {
   show(
     h("header", {}, h("h1", {}, "Braid"),
       h("div", { class: "summary" }, sumDot ? h("span", { class: "dot " + sumDot, "aria-hidden": "true" }) : null, summary),
-      h("button", { class: "btn", onclick: () => api("open", { What: "timeline" }).catch(e => alert(e.message)) }, "Timeline"),
-      h("button", { class: "btn", onclick: () => { view = "settings"; render(); } }, "Settings")),
+      h("button", { class: "btn", onclick: () => api("open", { What: "timeline" }).catch(e => alert(e.message)) }, "Hub"),
+      h("button", { class: "btn", onclick: () => goto("settings") }, "Settings")),
     suggestions(),
     ps.length ? h("div", { class: "list" }, ps.map((p, i) => item(p, states[i]))) :
       (found && found.length && !dismissed) ? null : h("div", { class: "list empty" }, h("h2", {}, "No folders yet"),
         h("p", {}, "Add a project folder and Braid keeps it the same on every PC you add it to. Add the same project on another PC and it fills in by itself."),
         h("button", { class: "btn primary", onclick: add }, "Add a folder")),
-    ps.length ? h("div", { class: "add" }, h("button", { class: "btn primary", onclick: add }, "+ Add a folder")) : null,
+    h("div", { class: "add" },
+      ps.length ? h("button", { class: "btn primary", onclick: add }, "+ Add a folder") : null,
+      h("button", { class: "btn", onclick: () => goto("hub") }, "Restore a project from your hub…")),
     typed, addMsg,
     h("footer", {}, `${st.pc} · connected to ${st.hub.replace(/^https?:\/\//, "")} · braid ${st.version}`));
 }
@@ -150,6 +160,19 @@ function suggestions() {
     msg);
 }
 
+// The command a Claude merge must pass in this project (e.g. a build).
+function checkRow(p) {
+  const input = h("input", { type: "text", value: p.check || "", placeholder: "e.g. go build ./...  (empty: no check)", "aria-label": "Merge check command" });
+  input.addEventListener("focus", () => (typing = true));
+  input.addEventListener("blur", () => (typing = false));
+  const save = h("button", { class: "btn", onclick: async () => {
+    try { await api("check", { Name: p.name, Check: input.value }); typing = false; refresh(); save.textContent = "Saved"; } catch (e) { alert(e.message); }
+  } }, "Save");
+  return h("div", {},
+    h("div", { class: "muted", style: "margin-bottom:4px" }, "When Claude joins edits in this project, they must pass this command, or they wait instead."),
+    h("div", { class: "add", style: "margin:0" }, h("div", { class: "grow" }, input), save));
+}
+
 function item(p, s) {
   const isOpen = openRow === p.name;
   const act = (body, confirmText) => async () => {
@@ -168,7 +191,9 @@ function item(p, s) {
       h("div", { class: "muted" }, p.folder),
       p.status && p.status.last ? h("div", { class: "muted" }, "Last: " + p.status.last) : null,
       ...((p.status && p.status.conflicts) || []).map(c => h("div", { class: "muted" }, "• " + c.Path + ": " + c.Why)),
+      checkRow(p),
       h("div", { class: "actions" },
+        h("button", { class: "btn primary", onclick: () => { histName = p.name; histOpen.clear(); hist = null; goto("history"); } }, "History & restore"),
         p.paused ? h("button", { class: "btn", onclick: act({ Name: p.name, Do: "resume" }) }, "Resume")
                  : h("button", { class: "btn", onclick: act({ Name: p.name, Do: "pause" }) }, "Pause"),
         h("button", { class: "btn danger", onclick: act({ Name: p.name, Do: "remove" },
@@ -186,8 +211,16 @@ function settings() {
     return h("label", { class: "toggle", for: key }, box, h("div", {}, h("b", {}, title), h("span", {}, desc)));
   };
   show(
-    h("header", {}, h("button", { class: "btn", onclick: () => { view = "home"; render(); } }, "← Back"), h("h1", {}, "Settings")),
+    h("header", {}, back("home"), h("h1", {}, "Settings")),
     h("div", { class: "list" },
+      h("div", { class: "toggle" }, h("div", { style: "flex:1" }, h("b", {}, "This PC's name"), h("span", {}, "How this PC is shown on your other PCs and in the web app."),
+        (() => {
+          const n = h("input", { type: "text", value: st.pc, "aria-label": "This PC's name", style: "margin-top:6px" });
+          n.addEventListener("focus", () => (typing = true));
+          n.addEventListener("blur", () => (typing = false));
+          n.addEventListener("change", async () => { try { await api("settings", { PCName: n.value }); typing = false; refresh(); } catch (e) { alert(e.message); } });
+          return n;
+        })())),
       toggle("autostart", "Start Braid when I log in", "Keeps your folders in step in the background, with an icon by the clock."),
       toggle("noClaude", "Let Claude join overlapping edits", "When two PCs changed the same lines, Claude Code on this PC merges them. It only sees that file, with no tools. Needs Claude Code signed in.", true),
       toggle("noUpdate", "Install updates automatically", "New versions come from your hub, signed by the Braid release key.", true),
@@ -201,7 +234,93 @@ function settings() {
           sel.addEventListener("change", async () => { try { await api("settings", { UpdateMinutes: +sel.value }); refresh(); } catch (e) { alert(e.message); } });
           return sel;
         })())),
+    h("div", { class: "add" },
+      h("button", { class: "btn", onclick: () => goto("setup") }, "Change hub or passphrase…"),
+      h("button", { class: "btn", onclick: () => goto("log") }, "Activity log")),
     h("footer", {}, `This PC: ${st.pc} · hub: ${st.hub} · braid ${st.version}`));
+}
+
+// ---- restore a project from the hub ----
+let hubList = null;
+async function hubView() {
+  typing = false;
+  show(h("header", {}, back("home"), h("h1", {}, "Restore from your hub")), h("p", { class: "hint" }, "Loading…"));
+  try { hubList = (await api("hub")).projects; } catch (e) { return show(h("header", {}, back("home"), h("h1", {}, "Restore from your hub")), h("p", { class: "error" }, e.message)); }
+  const msg = h("p", { class: "error", role: "alert" });
+  const rows = hubList.map(p => {
+    const folder = h("input", { type: "text", value: `${st.home}/Projects/${p.name}`, "aria-label": "Folder for " + p.name });
+    folder.addEventListener("focus", () => (typing = true));
+    folder.addEventListener("blur", () => (typing = false));
+    const go = h("button", { class: "btn primary", onclick: async () => {
+      msg.textContent = "";
+      if (!confirm(`Put ${p.name} in\n${folder.value}\n\nIf the folder exists and has files, Braid joins them with the project; nothing is deleted without being saved in the timeline.`)) return;
+      go.disabled = true; go.textContent = "Restoring…";
+      try { await api("restoreproject", { Name: p.name, Folder: folder.value }); typing = false; view = "home"; refresh(); }
+      catch (e) { msg.textContent = e.message; go.disabled = false; go.textContent = "Restore"; }
+    } }, "Restore");
+    const pick = h("button", { class: "btn", onclick: async () => { try { const r = await api("pick", {}); if (r.folder) folder.value = r.folder; } catch (e) { msg.textContent = e.message; } } }, "Choose…");
+    return h("div", { class: "item" }, h("div", { class: "details", style: "padding:14px" },
+      h("div", {}, h("b", {}, p.name), h("span", { class: "muted" }, p.pc ? `  ·  last changed on ${p.pc}` : "")),
+      h("div", { class: "add", style: "margin:0" }, h("div", { class: "grow" }, folder), pick, go)));
+  });
+  show(h("header", {}, back("home"), h("h1", {}, "Restore from your hub")),
+    h("p", { class: "hint", style: "margin-bottom:12px" }, "Projects on your hub that this PC doesn't have yet. Pick where each goes."),
+    rows.length ? h("div", { class: "list" }, rows) : h("div", { class: "list empty" }, h("h2", {}, "Nothing to restore"), h("p", {}, "Every project on your hub is already on this PC.")),
+    msg);
+}
+
+// ---- a project's history ----
+let histName = null, hist = null, histOpen = new Set();
+async function history() {
+  typing = false;
+  const title = h("h1", {}, histName + " · History");
+  if (!hist) {
+    show(h("header", {}, back("home"), title), h("p", { class: "hint" }, "Loading…"));
+    try { hist = await api("timeline?name=" + encodeURIComponent(histName)); } catch (e) { return show(h("header", {}, back("home"), title), h("p", { class: "error" }, e.message)); }
+  }
+  const act = (body, ok) => async () => {
+    try { await api("moment", body); hist = null; alert(ok); history(); } catch (e) { alert(e.message); }
+  };
+  const rows = hist.moments.map(m => {
+    const open = histOpen.has(m.id), here = m.id === hist.here, newest = m.id === hist.main;
+    const body = h("div", {});
+    if (open) {
+      body.append(h("p", { class: "hint" }, "Loading changes…"));
+      api(`changes?name=${encodeURIComponent(histName)}&id=${m.id}`).then(c => {
+        const files = c.files || [];
+        body.replaceChildren(
+          h("ul", { class: "files" }, files.slice(0, 40).map(f => h("li", {}, (f.kind === "added" ? "+ " : f.kind === "removed" ? "− " : "~ ") + f.path)),
+            files.length > 40 ? h("li", { class: "muted" }, `…and ${files.length - 40} more`) : null,
+            c.git ? h("li", { class: "muted" }, `git: ${c.git} internal file(s)`) : null,
+            !files.length && !c.git ? h("li", { class: "muted" }, "No file changes") : null),
+          h("div", { class: "actions", style: "margin-top:8px" },
+            !here ? h("button", { class: "btn", onclick: act({ Name: histName, ID: m.id, Do: "show" }, "This PC will show that moment in a few seconds. Whatever is here now is saved first.") }, "Show on this PC") : null,
+            !newest ? h("button", { class: "btn", onclick: () => confirm("Make this moment the newest, on every PC?\n\nEverything after it stays in the timeline, so this can be undone.") && act({ Name: histName, ID: m.id, Do: "restore" }, "Restored. Every PC following the newest switches to it.")() }, "Restore as newest on all PCs") : null));
+      }).catch(e => body.replaceChildren(h("p", { class: "error" }, e.message)));
+    }
+    return h("div", { class: "item" },
+      h("button", { class: "row", "aria-expanded": String(open), onclick: () => { open ? histOpen.delete(m.id) : histOpen.add(m.id); history(); } },
+        h("span", { class: "dot " + (here ? "ok" : ""), "aria-hidden": "true" }),
+        h("div", { class: "grow" },
+          h("div", { class: "name" }, m.pc, h("span", { class: "muted", style: "font-weight:400" }, "  " + new Date(m.time).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })),
+            m.braid ? h("span", { class: "tag" }, "braid") : null, here ? h("span", { class: "tag" }, "shown on this PC") : null, newest ? h("span", { class: "tag" }, "newest") : null),
+          h("div", { class: "sub" }, m.intent || "Saved changes"))),
+      open ? h("div", { class: "details" }, body) : null);
+  });
+  show(h("header", {}, back("home"), title),
+    hist.pinned ? h("div", { class: "card", style: "margin-bottom:12px" }, h("b", {}, "This PC is showing an older moment."), h("div", { class: "actions", style: "margin-top:8px" },
+      h("button", { class: "btn primary", onclick: act({ Name: histName, Do: "follow" }, "This PC goes back to the newest moment in a few seconds.") }, "Follow the newest"))) : null,
+    h("div", { class: "list" }, rows));
+}
+
+// ---- activity log ----
+async function logView() {
+  typing = false;
+  show(h("header", {}, back("settings"), h("h1", {}, "Activity log")), h("p", { class: "hint" }, "Loading…"));
+  let lines;
+  try { lines = (await api("log")).lines; } catch (e) { return show(h("header", {}, back("settings"), h("h1", {}, "Activity log")), h("p", { class: "error" }, e.message)); }
+  show(h("header", {}, back("settings"), h("h1", {}, "Activity log")),
+    h("pre", { class: "log" }, lines.length ? lines.join("\n") : "Nothing yet."));
 }
 
 refresh();
