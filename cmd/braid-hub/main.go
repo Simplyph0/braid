@@ -87,7 +87,7 @@ func handler(api http.Handler, updates string) http.Handler {
 	types := map[string]string{"braid.wasm": "application/wasm", "app.js": "text/javascript; charset=utf-8",
 		"wasm_exec.js": "text/javascript; charset=utf-8", "index.html": "text/html; charset=utf-8"}
 	mux := http.NewServeMux()
-	for _, p := range []string{"/o/", "/r/", "/refs", "/n/", "/notes", "/salt", "/claim"} {
+	for _, p := range []string{"/o/", "/r/", "/refs", "/n/", "/notes", "/salt", "/claim", "/beat", "/pcs", "/hubsettings"} {
 		mux.Handle(p, api)
 	}
 	// Signed builds for PCs. Public: a PC checks the signature, not the hub.

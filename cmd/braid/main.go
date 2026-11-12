@@ -363,7 +363,8 @@ func run(dir string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	srv := &ui.Server{Dir: dir, Autostart: func(on bool) error {
+	ag := &agent.Agent{Dir: dir, Log: lg}
+	srv := &ui.Server{Dir: dir, Agent: ag, Autostart: func(on bool) error {
 		if on {
 			return install()
 		}
@@ -378,7 +379,7 @@ func run(dir string) error {
 	go selfUpdate(ctx, dir, lg)
 	done := make(chan struct{})
 	go func() {
-		(&agent.Agent{Dir: dir, Log: lg}).Run(ctx, 5*time.Second)
+		ag.Run(ctx, 5*time.Second)
 		close(done)
 	}()
 	tray := ui.HaveTray() && !slices.Contains(os.Args, "--no-tray")

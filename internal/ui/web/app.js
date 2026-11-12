@@ -3,6 +3,7 @@
 const app = document.getElementById("app");
 let st = null, view = "home", openRow = null, typing = false;
 let found = null, picked = new Set(), dismissed = false; // project folders found on this PC
+let chats = null; // what the last chat sync did
 
 function h(tag, props, ...kids) {
   const el = document.createElement(tag);
@@ -48,6 +49,7 @@ function stateOf(p) {
 async function refresh() {
   if (typing) return;
   try { st = await api("state"); } catch (e) { show(h("p", { class: "error" }, e.message)); return; }
+  if (st.setUp) { try { chats = await api("chats"); } catch { chats = null; } }
   if (st.setUp && found === null) { // look once for project folders to suggest
     found = [];
     try { found = (await api("scan")).folders || []; picked = new Set(found.map(f => f.path)); } catch {}
@@ -122,6 +124,7 @@ function home() {
       h("div", { class: "summary" }, sumDot ? h("span", { class: "dot " + sumDot, "aria-hidden": "true" }) : null, summary),
       h("button", { class: "btn", onclick: () => api("open", { What: "timeline" }).catch(e => alert(e.message)) }, "Hub"),
       h("button", { class: "btn", onclick: () => goto("settings") }, "Settings")),
+    chatsNotice(),
     suggestions(),
     ps.length ? h("div", { class: "list" }, ps.map((p, i) => item(p, states[i]))) :
       (found && found.length && !dismissed) ? null : h("div", { class: "list empty" }, h("h2", {}, "No folders yet"),
@@ -173,6 +176,25 @@ function checkRow(p) {
     h("div", { class: "add", style: "margin:0" }, h("div", { class: "grow" }, input), save));
 }
 
+// Chats from your other PCs that are waiting for the Claude desktop app to close.
+function closeClaudeButton(label) {
+  const b = h("button", { class: "btn primary", onclick: async () => {
+    if (!confirm("Close the Claude desktop app, load the waiting chats, and open it again?\n\nAnything Claude is doing right now stops.")) return;
+    b.disabled = true; b.textContent = "Closing Claude…";
+    try { await api("closeclaude", {}); alert("Done. The chats are loaded and Claude is open again."); } catch (e) { alert(e.message); }
+    chats = null; refresh();
+  } }, label || "Close Claude and load them");
+  return b;
+}
+function chatsNotice() {
+  const s = chats && chats.enabled && chats.status;
+  if (!s || !s.hasApp || !s.pending) return null;
+  return h("div", { class: "card", style: "margin-bottom:14px" },
+    h("div", { style: "font-weight:600" }, `${s.pending} chat${s.pending > 1 ? "s" : ""} from your other PCs ${s.pending > 1 ? "are" : "is"} waiting for the Claude app to close`),
+    h("p", { class: "hint", style: "margin:4px 0 10px" }, s.appRunning ? "Claude only reads its chat list when it starts. Close it yourself, or let Braid do it." : "Claude is closed now: they load within a minute."),
+    s.appRunning ? closeClaudeButton() : null);
+}
+
 function item(p, s) {
   const isOpen = openRow === p.name;
   const act = (body, confirmText) => async () => {
@@ -215,13 +237,14 @@ function settings() {
     h("div", { class: "list" },
       h("div", { class: "toggle" }, h("div", { style: "flex:1" }, h("b", {}, "This PC's name"), h("span", {}, "How this PC is shown on your other PCs and in the web app."),
         (() => {
-          const n = h("input", { type: "text", value: st.pc, "aria-label": "This PC's name", style: "margin-top:6px" });
+          const n = h("input", { type: "text", value: st.pc, "aria-label": "This PC's name", style: "margin-top:8px;display:block" });
           n.addEventListener("focus", () => (typing = true));
           n.addEventListener("blur", () => (typing = false));
           n.addEventListener("change", async () => { try { await api("settings", { PCName: n.value }); typing = false; refresh(); } catch (e) { alert(e.message); } });
           return n;
         })())),
       toggle("autostart", "Start Braid when I log in", "Keeps your folders in step in the background, with an icon by the clock."),
+      toggle("noChats", "Back up all my Claude chats", "Every Claude Code chat on this PC, and the Claude desktop app's own chat list, is backed up to your hub and brought to your other PCs. Chats are only ever added, never deleted.", true),
       toggle("noClaude", "Let Claude join overlapping edits", "When two PCs changed the same lines, Claude Code on this PC merges them. It only sees that file, with no tools. Needs Claude Code signed in.", true),
       toggle("noUpdate", "Install updates automatically", "New versions come from your hub, signed by the Braid release key.", true),
       h("label", { class: "toggle", for: "every" },
@@ -234,10 +257,33 @@ function settings() {
           sel.addEventListener("change", async () => { try { await api("settings", { UpdateMinutes: +sel.value }); refresh(); } catch (e) { alert(e.message); } });
           return sel;
         })())),
+    chatsCard(),
     h("div", { class: "add" },
       h("button", { class: "btn", onclick: () => goto("setup") }, "Change hub or passphrase…"),
       h("button", { class: "btn", onclick: () => goto("log") }, "Activity log")),
     h("footer", {}, `This PC: ${st.pc} · hub: ${st.hub} · braid ${st.version}`));
+}
+
+function chatsCard() {
+  const s = chats && chats.status;
+  if (!chats || !chats.enabled) return h("p", { class: "hint", style: "margin-top:14px" }, "Chat backup is off.");
+  const lines = [];
+  if (!s || !s.updated || s.updated.startsWith("0001")) lines.push("Waiting for the first chat sync…");
+  else {
+    lines.push(`${s.files} chat file${s.files === 1 ? "" : "s"} on this PC · last synced ${ago(s.updated)}`);
+    if (s.pushed || s.pulled) lines.push(`Last time: ${s.pushed} sent to your hub, ${s.pulled} brought here`);
+    if (!s.hasApp) lines.push("The Claude desktop app isn't on this PC, so only Claude Code chats are synced.");
+  }
+  const sync = h("button", { class: "btn", onclick: async () => {
+    sync.disabled = true; sync.textContent = "Syncing…";
+    try { await api("chats/now", {}); } catch (e) { alert(e.message); }
+    chats = null; refresh();
+  } }, "Sync chats now");
+  return h("div", { class: "card", style: "margin-top:14px" },
+    h("div", { style: "font-weight:600;margin-bottom:4px" }, "Claude chats"),
+    ...lines.map(l => h("div", { class: "muted" }, l)),
+    s && s.error ? h("div", { class: "error" }, s.error) : null,
+    h("div", { class: "actions", style: "margin-top:10px" }, sync, s && s.hasApp && s.pending ? closeClaudeButton() : null));
 }
 
 // ---- restore a project from the hub ----

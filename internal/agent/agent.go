@@ -43,6 +43,7 @@ type Config struct {
 	Key           string    `json:"key"`                     // shortcut: the master key sits in this 0600 file; move it to the OS keyring when there's an installer
 	NoClaude      bool      `json:"noClaude,omitempty"`      // don't ask Claude to merge on this PC
 	NoUpdate      bool      `json:"noUpdate,omitempty"`      // don't install updates from the hub
+	NoChats       bool      `json:"noChats,omitempty"`       // don't back up and sync Claude chats
 	UpdateMinutes int       `json:"updateMinutes,omitempty"` // how often to look for one (1 or more; default 60)
 	Projects      []Project `json:"projects"`
 }
@@ -186,6 +187,8 @@ type Agent struct {
 	mu        sync.Mutex // guards ws and published: projects sync side by side
 	busy      sync.Map   // project name -> true while it's syncing
 	beatErr   string     // the last failure to phone home, so it's logged once
+	chatsMu   sync.Mutex // one chat sync at a time
+	chatsLast time.Time  // when the last chat sync started
 	hub       string     // the hub a.Store talks to
 	ws        map[string]*timeline.Workspace
 	published map[string]published
@@ -242,6 +245,16 @@ func (a *Agent) Tick(ctx context.Context) error {
 		go func() {
 			defer func() { a.busy.Delete(p.Name); <-slots; wg.Done() }() // free the project before Tick can return
 			a.tickOne(ctx, c, p)
+		}()
+	}
+	// Every Claude chat on this PC, besides the folders above (at most every 30 s).
+	if !c.NoChats && time.Since(a.chatsLast) > 30*time.Second {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := a.SyncChats(ctx); err != nil && ctx.Err() == nil {
+				a.Log.Printf("chats: %v", err)
+			}
 		}()
 	}
 	wg.Wait()
@@ -421,13 +434,6 @@ func (a *Agent) syncOne(ctx context.Context, c *Config, p Project, st *Status) e
 		st.Last = "updated to the newest moment"
 		a.Log.Printf("%s: %s", p.Name, st.Last)
 	}
-	// The project's Claude Code chats come along too.
-	cr, err := w.Repo.SyncChats(claude.ProjectDir(claude.Home(), p.Folder), p.Folder, c.PC, 30*time.Second, time.Now())
-	if err != nil {
-		a.Log.Printf("%s: chats: %v", p.Name, err)
-	} else if cr.Pulled > 0 {
-		a.Log.Printf("%s: brought in %d chat(s) from your other PCs", p.Name, cr.Pulled)
-	}
 	if rep.Busy > 0 {
 		a.Log.Printf("%s: left %d file(s) alone while they're being edited", p.Name, rep.Busy)
 	}
@@ -524,4 +530,81 @@ func (a *Agent) heartbeat(ctx context.Context) {
 		case <-t.C:
 		}
 	}
+}
+
+// ChatsStatus is what the last chat sync did, for the window.
+type ChatsStatus struct {
+	Updated    time.Time `json:"updated"`
+	Files      int       `json:"files"`   // chat files on this PC
+	Pushed     int       `json:"pushed"`  // sent to your hub in the last sync
+	Pulled     int       `json:"pulled"`  // brought here in the last sync
+	Pending    int       `json:"pending"` // desktop-app records waiting for the app to close
+	AppRunning bool      `json:"appRunning"`
+	HasApp     bool      `json:"hasApp"` // the Claude desktop app is on this PC
+	Error      string    `json:"error,omitempty"`
+}
+
+// ReadChatsStatus reads what the last chat sync did.
+func ReadChatsStatus(dir string) (ChatsStatus, error) {
+	var st ChatsStatus
+	b, err := os.ReadFile(filepath.Join(dir, "chats-status.json"))
+	if err != nil {
+		return st, err
+	}
+	return st, json.Unmarshal(b, &st)
+}
+
+// SyncChats backs up every Claude chat on this PC to the hub and brings in
+// the ones from your other PCs, including the desktop app's own session list
+// (written only while the app is closed).
+func (a *Agent) SyncChats(ctx context.Context) (rep timeline.ChatReport, err error) {
+	a.chatsMu.Lock()
+	defer a.chatsMu.Unlock()
+	a.chatsLast = time.Now()
+	c, err := LoadConfig(a.Dir)
+	if err != nil {
+		return rep, nil
+	}
+	loc := claude.Detect("", "")
+	set := timeline.ChatSet{ClaudeHome: loc.ClaudeHome, SessionsDir: loc.SessionsDir(), ScratchRoot: loc.ScratchRoot(), Home: loc.Home,
+		Projects: map[string]string{}, AppRunning: claude.DesktopRunning()}
+	if loc.Ambiguous {
+		set.SessionsDir = "" // several desktop data folders and no way to choose: leave the app's list alone
+	}
+	for _, p := range c.Projects {
+		set.Projects[p.Name] = p.Folder
+	}
+	status := ChatsStatus{HasApp: set.SessionsDir != "", AppRunning: set.AppRunning}
+	defer func() {
+		status.Updated = time.Now()
+		status.Files, status.Pushed, status.Pulled, status.Pending = rep.Files, rep.Pushed, rep.Pulled, rep.Pending
+		if err != nil {
+			status.Error = err.Error()
+		}
+		b, _ := json.Marshal(status)
+		os.WriteFile(filepath.Join(a.Dir, "chats-status.json"), b, 0o600)
+	}()
+	a.mu.Lock()
+	if a.Store == nil {
+		a.Store = c.Store()
+	}
+	s := a.Store
+	a.mu.Unlock()
+	repo, err := c.Repo(s, timeline.ChatsProject)
+	if err != nil {
+		return rep, err
+	}
+	var st timeline.ChatState
+	statePath := filepath.Join(a.Dir, "chats-state.json")
+	if b, err := os.ReadFile(statePath); err == nil {
+		json.Unmarshal(b, &st)
+	}
+	rep, err = repo.SyncAllChats(set, c.PC, 30*time.Second, time.Now(), &st)
+	if b, jerr := json.Marshal(st); jerr == nil {
+		os.WriteFile(statePath, b, 0o600) // even after a failure: what was uploaded isn't uploaded twice
+	}
+	if rep.Pulled > 0 || rep.Pushed > 0 {
+		a.Log.Printf("chats: sent %d, brought in %d (%d chat files)", rep.Pushed, rep.Pulled, rep.Files)
+	}
+	return rep, err
 }

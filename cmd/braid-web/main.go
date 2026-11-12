@@ -154,7 +154,7 @@ func overview(_ []js.Value) (any, error) {
 	out := []projectView{}
 	for ref, tip := range refs {
 		name, ok := strings.CutSuffix(ref, "/main")
-		if !ok || strings.Contains(name, "/") {
+		if !ok || strings.Contains(name, "/") || strings.HasPrefix(name, "_") { // "_chats" is Braid's own
 			continue
 		}
 		r, err := repo(name)

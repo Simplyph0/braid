@@ -28,6 +28,7 @@ var webFS embed.FS
 // Server is the window's backend.
 type Server struct {
 	Dir       string              // braid's config folder
+	Agent     *agent.Agent        // runs the syncs (for "sync chats now")
 	Autostart func(on bool) error // turn start-at-login on or off
 	IsAuto    func() bool         // whether it's on
 	key       string              // the secret in the window's address
@@ -68,6 +69,9 @@ func (s *Server) Handler(addr string) http.Handler {
 	mux.HandleFunc("POST /api/moment", s.moment)
 	mux.HandleFunc("POST /api/check", s.check)
 	mux.HandleFunc("GET /api/log", s.log)
+	mux.HandleFunc("GET /api/chats", s.chatsStatus)
+	mux.HandleFunc("POST /api/chats/now", s.chatsNow)
+	mux.HandleFunc("POST /api/closeclaude", s.closeClaude)
 	mux.HandleFunc("POST /api/addmany", s.addMany)
 	mux.HandleFunc("POST /api/project", s.project)
 	mux.HandleFunc("POST /api/settings", s.settings)
@@ -136,7 +140,7 @@ func (s *Server) state(w http.ResponseWriter, _ *http.Request) {
 	}
 	home, _ := os.UserHomeDir()
 	out := map[string]any{"setUp": true, "home": home, "pc": c.PC, "hub": c.Hub, "version": update.Version,
-		"noClaude": c.NoClaude, "noUpdate": c.NoUpdate, "updateMinutes": int(c.UpdateEvery().Minutes()), "autostart": s.IsAuto != nil && s.IsAuto()}
+		"noClaude": c.NoClaude, "noUpdate": c.NoUpdate, "noChats": c.NoChats, "updateMinutes": int(c.UpdateEvery().Minutes()), "autostart": s.IsAuto != nil && s.IsAuto()}
 	ps := []projectView{}
 	for _, p := range c.Projects {
 		st, _ := agent.ReadStatus(s.Dir, p.Name)
@@ -210,7 +214,7 @@ func AddFolder(dir, folder, name string) error {
 	if name == "" {
 		name = filepath.Base(folder)
 	}
-	name = strings.Trim(nameRe.ReplaceAllString(name, "-"), "-.")
+	name = strings.Trim(nameRe.ReplaceAllString(name, "-"), "-._")
 	if name == "" {
 		return errors.New("that folder needs a name")
 	}
@@ -301,9 +305,9 @@ func (s *Server) project(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		NoClaude, NoUpdate, Autostart *bool
-		UpdateMinutes                 *int
-		PCName                        *string
+		NoClaude, NoUpdate, NoChats, Autostart *bool
+		UpdateMinutes                          *int
+		PCName                                 *string
 	}
 	if err := decode(r, &req); err != nil {
 		reply(w, nil, err)
@@ -319,6 +323,9 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.NoUpdate != nil {
 		c.NoUpdate = *req.NoUpdate
+	}
+	if req.NoChats != nil {
+		c.NoChats = *req.NoChats
 	}
 	if req.PCName != nil {
 		n := strings.TrimSpace(*req.PCName)

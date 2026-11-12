@@ -32,7 +32,7 @@ func newPC(t *testing.T, url, name, pass string) *pc {
 	s := &store.HTTP{URL: url, Token: token}
 	folder := filepath.Join(t.TempDir(), "proj")
 	os.MkdirAll(folder, 0o755)
-	c := &Config{Hub: url, Token: token, PC: name, Key: hex.EncodeToString(key), NoClaude: true, Projects: []Project{{Name: "proj", Folder: folder}}}
+	c := &Config{Hub: url, Token: token, PC: name, Key: hex.EncodeToString(key), NoClaude: true, NoChats: true, Projects: []Project{{Name: "proj", Folder: folder}}}
 	if err := c.Save(dir); err != nil {
 		t.Fatal(err)
 	}
@@ -210,4 +210,39 @@ func TestPCPhonesHomeEvenWhileBusy(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("the hub never heard from the PC")
+}
+
+func TestAgentBacksUpEveryChat(t *testing.T) {
+	hub := httptest.NewServer(store.Handler(&store.Dir{Root: t.TempDir()}))
+	defer hub.Close()
+	p := newPC(t, hub.URL, "Desktop", "correct horse")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	claudeHome := filepath.Join(home, ".claude")
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeHome)
+	c, _ := LoadConfig(p.dir)
+	c.NoChats = false
+	c.Projects = nil
+	c.Save(p.dir)
+	// A chat in a folder that is not a Braid project.
+	cwd := filepath.Join(home, "code", "tool")
+	os.MkdirAll(cwd, 0o755)
+	dir := filepath.Join(claudeHome, "projects", "-tool")
+	os.MkdirAll(dir, 0o755)
+	f := filepath.Join(dir, "s1.jsonl")
+	os.WriteFile(f, []byte(`{"uuid":"u1","cwd":"`+cwd+`"}`+"\n"), 0o600)
+	old := time.Now().Add(-time.Hour)
+	os.Chtimes(f, old, old)
+	if err := p.a.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	st, err := ReadChatsStatus(p.dir)
+	if err != nil || st.Error != "" || st.Pushed == 0 || st.Files != 1 {
+		t.Fatalf("chats status: %+v %v", st, err)
+	}
+	c, _ = LoadConfig(p.dir)
+	if tip, _ := (&store.HTTP{URL: c.Hub, Token: c.Token}).Ref("_chats/main"); tip == "" {
+		t.Error("nothing on the hub")
+	}
 }

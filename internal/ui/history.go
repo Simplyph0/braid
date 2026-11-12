@@ -47,7 +47,7 @@ func (s *Server) hubProjects(w http.ResponseWriter, _ *http.Request) {
 	out := []hp{}
 	for ref := range refs {
 		name, ok := strings.CutSuffix(ref, "/main")
-		if !ok || strings.Contains(name, "/") || mine[name] {
+		if !ok || strings.Contains(name, "/") || strings.HasPrefix(name, "_") || mine[name] {
 			continue
 		}
 		h := hp{Name: name}
